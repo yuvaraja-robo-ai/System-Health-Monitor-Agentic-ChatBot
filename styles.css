@@ -1,0 +1,243 @@
+/* SystemHealth wireframes — clean modern low-fi */
+:root {
+  --paper: #fafaf7;
+  --paper-2: #f3f2ec;
+  --ink: #1a1a1a;
+  --ink-2: #3a3a38;
+  --ink-3: #6e6e68;
+  --ink-4: #a8a8a0;
+  --rule: #1a1a1a;
+  --rule-soft: #c9c8c0;
+  --teal: oklch(0.68 0.12 200);
+  --amber: oklch(0.72 0.14 65);
+  --rose:  oklch(0.66 0.14 25);
+  --font-hand: "Caveat", "Comic Sans MS", cursive;
+  --font-mono: "Geist Mono", "JetBrains Mono", ui-monospace, monospace;
+  --font-ui: "Inter", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: var(--font-ui);
+  color: var(--ink);
+  background: var(--paper);
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wf {
+  background: var(--paper);
+  color: var(--ink);
+  padding: 28px;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.45;
+  position: relative;
+}
+
+.wf .hand { font-family: var(--font-hand); }
+.wf .mono { font-family: var(--font-mono); }
+
+.wf h1, .wf h2, .wf h3 { margin: 0; font-weight: 500; letter-spacing: -0.01em; }
+.wf h1 { font-size: 22px; }
+.wf h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; }
+.wf h3 { font-size: 13px; font-weight: 600; }
+
+.wf .muted { color: var(--ink-3); }
+.wf .dim   { color: var(--ink-4); }
+
+/* box primitives */
+.box {
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  padding: 14px;
+}
+.box.dash {
+  border: 1.5px dashed var(--rule);
+  background: transparent;
+}
+.box.soft { border-color: var(--rule-soft); }
+.box.fill { background: var(--paper-2); }
+.box.ink { background: var(--ink); color: var(--paper); }
+.box.ink .muted { color: #aaa; }
+
+.pad-0 { padding: 0; }
+.pad-sm { padding: 10px; }
+
+.row { display: flex; gap: 12px; align-items: stretch; }
+.col { display: flex; flex-direction: column; gap: 12px; }
+.grid { display: grid; gap: 12px; }
+
+/* small chrome */
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--rule); padding: 2px 8px;
+  font-family: var(--font-mono); font-size: 11px;
+  background: var(--paper);
+}
+.chip.fill { background: var(--ink); color: var(--paper); }
+.chip.soft { border-color: var(--rule-soft); color: var(--ink-2); }
+.chip.teal  { border-color: var(--teal); color: var(--teal); }
+.chip.amber { border-color: var(--amber); color: var(--amber); }
+.chip.rose  { border-color: var(--rose);  color: var(--rose); }
+
+.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--ink); }
+.dot.teal { background: var(--teal); }
+.dot.amber{ background: var(--amber); }
+.dot.rose { background: var(--rose); }
+
+.kbd {
+  font-family: var(--font-mono); font-size: 10px;
+  border: 1px solid var(--rule); padding: 1px 5px; background: var(--paper);
+}
+
+/* dividers */
+.hr { height: 1px; background: var(--rule); margin: 10px 0; }
+.hr-soft { height: 1px; background: var(--rule-soft); margin: 10px 0; }
+.vr { width: 1px; background: var(--rule); align-self: stretch; }
+.vr-soft { width: 1px; background: var(--rule-soft); align-self: stretch; }
+
+/* headers */
+.wf-header {
+  display: flex; justify-content: space-between; align-items: flex-end;
+  padding-bottom: 14px; margin-bottom: 18px;
+  border-bottom: 1.5px solid var(--rule);
+}
+.wf-header .title-row { display: flex; align-items: baseline; gap: 14px; }
+.wf-header .sub { color: var(--ink-3); font-size: 12px; }
+
+.section-title {
+  display: flex; align-items: baseline; justify-content: space-between;
+  margin-bottom: 8px;
+}
+.section-title .lbl {
+  font-family: var(--font-ui); font-size: 10px;
+  text-transform: uppercase; letter-spacing: 0.14em; font-weight: 600;
+  color: var(--ink-2);
+}
+.section-title .lbl::before { content: "▸  "; color: var(--ink-3); }
+
+/* tabs */
+.tabs { display: flex; gap: 0; border-bottom: 1px solid var(--rule); }
+.tab {
+  padding: 8px 14px; border: 1px solid var(--rule); border-bottom: none;
+  background: var(--paper-2); color: var(--ink-3);
+  font-size: 12px; font-weight: 500;
+  margin-right: -1px;
+}
+.tab.active { background: var(--paper); color: var(--ink); position: relative; }
+.tab.active::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -1px;
+  height: 1px; background: var(--paper);
+}
+
+/* margin annotations (designer notes) */
+.annot {
+  font-family: var(--font-hand); font-size: 16px; color: var(--teal);
+  line-height: 1.1;
+}
+.annot.amber { color: var(--amber); }
+.annot.ink { color: var(--ink-2); }
+.annot::before { content: "↳ "; }
+
+/* squiggly underline for AI-authored text */
+.ai {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 4'><path d='M0 2 Q 2.5 0, 5 2 T 10 2 T 15 2 T 20 2' stroke='%23009688' fill='none' stroke-width='0.8'/></svg>");
+  background-repeat: repeat-x;
+  background-position: 0 100%;
+  background-size: 10px 3px;
+  padding-bottom: 2px;
+}
+
+/* placeholder image/chart */
+.ph {
+  background:
+    repeating-linear-gradient(135deg,
+      transparent 0 8px,
+      rgba(0,0,0,0.06) 8px 9px);
+  border: 1.5px dashed var(--rule-soft);
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  display: flex; align-items: center; justify-content: center;
+}
+
+/* sparkline containers — we draw SVG polylines inside */
+.spark { display: block; width: 100%; height: 100%; }
+.spark path, .spark polyline { fill: none; stroke: var(--ink); stroke-width: 1.2; stroke-linejoin: round; stroke-linecap: round; }
+.spark .fill { fill: rgba(0,0,0,0.04); stroke: none; }
+.spark .axis { stroke: var(--rule-soft); stroke-width: 1; }
+.spark text { font-family: var(--font-mono); font-size: 9px; fill: var(--ink-3); }
+.spark.teal path, .spark.teal polyline { stroke: var(--teal); }
+.spark.amber path, .spark.amber polyline { stroke: var(--amber); }
+.spark.rose path, .spark.rose polyline { stroke: var(--rose); }
+
+/* tables */
+table.wf-table {
+  width: 100%; border-collapse: collapse;
+  font-family: var(--font-mono); font-size: 11px;
+}
+table.wf-table th, table.wf-table td {
+  text-align: left; padding: 6px 8px;
+  border-bottom: 1px solid var(--rule-soft);
+}
+table.wf-table th {
+  font-family: var(--font-ui); font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.08em; font-size: 10px;
+  color: var(--ink-2);
+  border-bottom: 1px solid var(--rule);
+}
+table.wf-table tr:last-child td { border-bottom: none; }
+table.wf-table td.num { text-align: right; }
+
+/* log lines */
+.log {
+  font-family: var(--font-mono); font-size: 11px; line-height: 1.6;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.log .lvl { display: inline-block; width: 46px; }
+.log .ts  { color: var(--ink-4); }
+.log .svc { color: var(--ink-3); }
+
+/* scan / pulse */
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+.live-dot {
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--teal); animation: blink 1.4s infinite;
+}
+
+/* bars */
+.bar {
+  height: 8px; border: 1px solid var(--rule); position: relative; background: var(--paper);
+}
+.bar .fill { position: absolute; inset: 0 auto 0 0; background: var(--ink); }
+.bar.teal .fill { background: var(--teal); }
+.bar.amber .fill { background: var(--amber); }
+.bar.rose .fill { background: var(--rose); }
+
+/* checkbox-ish */
+.chk {
+  display: inline-block; width: 12px; height: 12px; border: 1px solid var(--rule);
+  vertical-align: -2px; margin-right: 6px; background: var(--paper);
+}
+.chk.on { background: var(--ink); }
+.chk.on::after { content: "✓"; color: var(--paper); font-size: 10px; display:block; text-align:center; line-height:10px; }
+
+/* sparkline legend */
+.legend { display: flex; gap: 14px; font-size: 11px; color: var(--ink-3); font-family: var(--font-mono); }
+.legend span::before { content: "— "; }
+
+/* scroll-style */
+.scroll { overflow: hidden; position: relative; }
+
+/* corner tick marks (blueprint-ish) */
+.ticks {
+  position: absolute; inset: 0; pointer-events: none;
+}
+.ticks::before, .ticks::after {
+  content: ""; position: absolute; border: 1px solid var(--rule);
+  width: 10px; height: 10px;
+}
+.ticks::before { top: -1px; left: -1px; border-right: none; border-bottom: none; }
+.ticks::after  { bottom: -1px; right: -1px; border-left: none; border-top: none; }

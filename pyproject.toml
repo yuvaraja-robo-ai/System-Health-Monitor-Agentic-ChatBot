@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "systemhealth"
+version = "0.1.0"
+description = "Real-time host monitoring dashboard for NVIDIA Jetson and Ubuntu — metrics, logs, anomaly detection, agent chat"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+authors = [
+  {name = "SystemHealth Contributors"}
+]
+keywords = ["monitoring", "jetson", "nvidia", "dashboard", "observability", "llm"]
+classifiers = [
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Operating System :: POSIX :: Linux",
+  "Topic :: System :: Monitoring",
+  "Topic :: System :: Hardware",
+]
+requires-python = ">=3.10"
+
+[project.urls]
+Homepage = "https://github.com/your-org/System-Health-Monitor-Agentic-ChatBot"
+Documentation = "https://github.com/your-org/System-Health-Monitor-Agentic-ChatBot#readme"
+Issues = "https://github.com/your-org/System-Health-Monitor-Agentic-ChatBot/issues"
+Changelog = "https://github.com/your-org/System-Health-Monitor-Agentic-ChatBot/releases"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "psutil>=5.9",
+    "watchdog>=4.0",
+    "duckdb>=1.1",
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "httpx>=0.27",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "websockets>=12.0",
+]
+
+[project.optional-dependencies]
+jetson = ["jetson-stats>=4.2"]
+journal = ["systemd-python>=235"]
+kb = ["sentence-transformers>=2.7", "faiss-cpu>=1.8"]
+all = [
+    "jetson-stats>=4.2",
+    "systemd-python>=235",
+    "sentence-transformers>=2.7",
+    "faiss-cpu>=1.8",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-v --tb=short"

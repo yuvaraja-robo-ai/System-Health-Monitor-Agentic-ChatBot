@@ -1,0 +1,147 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>SystemHealth — Wireframes</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;600&family=Geist+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    body { background: #ecebe4; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+  <script type="text/babel" src="design-canvas.jsx"></script>
+  <script type="text/babel" src="primitives.jsx"></script>
+  <script type="text/babel" src="wf1-cockpit.jsx"></script>
+  <script type="text/babel" src="wf2-sidebar.jsx"></script>
+  <script type="text/babel" src="wf3-terminal.jsx"></script>
+  <script type="text/babel" src="wf4-editorial.jsx"></script>
+  <script type="text/babel" src="wf5-leakhunter.jsx"></script>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+    const { DesignCanvas, DCSection, DCArtboard } = window;
+
+    // ---------- TWEAKS ----------
+    const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+      "host": "jetson"
+    }/*EDITMODE-END*/;
+
+    function useTweaks() {
+      const [tweaks, setTweaks] = useState(() => {
+        try {
+          const stored = localStorage.getItem("sh_tweaks");
+          return stored ? { ...TWEAK_DEFAULTS, ...JSON.parse(stored) } : TWEAK_DEFAULTS;
+        } catch { return TWEAK_DEFAULTS; }
+      });
+      const [open, setOpen] = useState(false);
+
+      useEffect(() => {
+        const onMsg = (e) => {
+          if (!e.data || typeof e.data !== "object") return;
+          if (e.data.type === "__activate_edit_mode") setOpen(true);
+          if (e.data.type === "__deactivate_edit_mode") setOpen(false);
+        };
+        window.addEventListener("message", onMsg);
+        window.parent.postMessage({ type: "__edit_mode_available" }, "*");
+        return () => window.removeEventListener("message", onMsg);
+      }, []);
+
+      const update = (k, v) => {
+        const next = { ...tweaks, [k]: v };
+        setTweaks(next);
+        try { localStorage.setItem("sh_tweaks", JSON.stringify(next)); } catch {}
+        window.parent.postMessage({ type: "__edit_mode_set_keys", edits: { [k]: v } }, "*");
+      };
+
+      return [tweaks, update, open];
+    }
+
+    function TweaksPanel({ tweaks, update, open }) {
+      if (!open) return null;
+      return (
+        <div style={{
+          position: "fixed", right: 18, bottom: 18, zIndex: 50,
+          width: 260, background: "var(--paper)",
+          border: "1px solid var(--rule)",
+          boxShadow: "4px 6px 0 rgba(0,0,0,0.12)",
+          fontFamily: "var(--font-ui)", fontSize: 12,
+        }}>
+          <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--rule)", fontWeight: 600, display: "flex", justifyContent: "space-between" }}>
+            <span>Tweaks</span>
+            <span className="hand" style={{ fontSize: 16, color: "var(--ink-3)" }}>/ live</span>
+          </div>
+          <div style={{ padding: 12 }}>
+            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--ink-3)", marginBottom: 6 }}>Host</div>
+            <div style={{ display: "flex", gap: 0, border: "1px solid var(--rule)" }}>
+              {[["jetson", "Jetson Orin"], ["ubuntu", "Ubuntu x86"]].map(([k, lbl]) => (
+                <button key={k}
+                  onClick={() => update("host", k)}
+                  style={{
+                    flex: 1, padding: "8px 0",
+                    background: tweaks.host === k ? "var(--ink)" : "transparent",
+                    color: tweaks.host === k ? "var(--paper)" : "var(--ink)",
+                    border: "none", borderRight: k === "jetson" ? "1px solid var(--rule)" : "none",
+                    fontFamily: "var(--font-mono)", fontSize: 11, cursor: "pointer",
+                  }}>{lbl}</button>
+              ))}
+            </div>
+            <div className="hand" style={{ fontSize: 15, color: "var(--ink-3)", marginTop: 8, lineHeight: 1.2 }}>
+              swaps Jetson SoC panels ↔ x86 platform panels across all wireframes
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ---------- APP ----------
+    function App() {
+      const [tweaks, update, open] = useTweaks();
+      const host = tweaks.host;
+      const { W1_Cockpit, W2_Sidebar, W3_Terminal, W4_Editorial, W5_LeakHunter } = window;
+
+      return (
+        <>
+          <DesignCanvas title="SystemHealth — wireframe exploration" subtitle="5 layouts · Jetson Orin Nano + Ubuntu x86 · on-demand AI agent">
+            <DCSection id="overview" title="Overview approaches" subtitle="Different ways to organize the same data">
+              <DCArtboard id="wf1" label="1 · Cockpit grid — everything visible at once" width={1380} height={900}>
+                <W1_Cockpit host={host} />
+              </DCArtboard>
+              <DCArtboard id="wf4" label="4 · Editorial briefing — narrative, scroll-friendly" width={1380} height={1280}>
+                <W4_Editorial host={host} />
+              </DCArtboard>
+            </DCSection>
+
+            <DCSection id="focused" title="App-focused approaches" subtitle="The customer's apps are the center of gravity">
+              <DCArtboard id="wf2" label="2 · Sidebar + focus — pick an app, see its world" width={1380} height={900}>
+                <W2_Sidebar host={host} />
+              </DCArtboard>
+              <DCArtboard id="wf5" label="5 · Leak Hunter — app-centric, crash & leak detection" width={1380} height={1480}>
+                <W5_LeakHunter host={host} />
+              </DCArtboard>
+            </DCSection>
+
+            <DCSection id="tui" title="Terminal metaphor" subtitle="For headless Jetson + SSH workflows">
+              <DCArtboard id="wf3" label="3 · Terminal — nmon-style TUI in the browser" width={1380} height={900}>
+                <W3_Terminal host={host} />
+              </DCArtboard>
+            </DCSection>
+          </DesignCanvas>
+
+          <TweaksPanel tweaks={tweaks} update={update} open={open} />
+        </>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>

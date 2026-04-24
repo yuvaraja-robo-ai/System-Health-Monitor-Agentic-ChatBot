@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+.env
+
+# Data — never commit live metrics, logs, or user data
+data/metrics.sqlite
+data/metrics.sqlite-shm
+data/metrics.sqlite-wal
+data/logs.duckdb
+data/logs.duckdb.wal
+data/thresholds.json
+data/pinned_apps.json
+data/kb/faiss.index
+data/kb/meta.json
+data/kb/auto_*.md
+
+# Keep KB runbooks but not generated indexes
+# (add your own .md files to data/kb/ and commit them)
+
+# Secrets / config
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+Thumbs.db
