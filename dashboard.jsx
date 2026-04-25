@@ -1018,9 +1018,25 @@ function NmonView({ meta }) {
     setPinnedApps(d.pinned || []);
   };
 
+  const appOptions = useMemo(() => {
+    const out = [];
+    const seen = new Set();
+    (apps || []).forEach((app) => {
+      if (!app?.name || seen.has(app.name)) return;
+      seen.add(app.name);
+      out.push(app);
+    });
+    (pinnedApps || []).forEach((name) => {
+      if (!name || seen.has(name)) return;
+      seen.add(name);
+      out.push({ name, label: `${name} (pinned)`, status: "ok" });
+    });
+    return out;
+  }, [apps, pinnedApps]);
+
   useEffect(() => {
-    if (!selected && apps?.length) setSelected(apps[0].name);
-  }, [apps, selected]);
+    if (!selected && appOptions.length) setSelected(appOptions[0].name);
+  }, [appOptions, selected]);
   useEffect(() => {
     if (!meta?.polling) return;
     setLivePolling(meta.polling);
@@ -1047,6 +1063,13 @@ function NmonView({ meta }) {
   const appWarns = appHist?.app_events?.warn_history?.v || [];
   const appCrashes = appHist?.app_events?.crash_history?.v || [];
   const eventMax = Math.max(1, ...appErrors, ...appWarns, ...appCrashes);
+  const selectedApp = appOptions.find(a => a.name === selected) || null;
+  const selectedIdentity = appHist?.identity || {};
+  const latestAppCpu = appHist?.app_cpu?.pct ?? appCpu.at(-1);
+  const latestAppRss = appHist?.app_memory?.rss_bytes ?? appHist?.app_memory?.history?.v?.at(-1);
+  const latestReadBps = appIoRead.at(-1);
+  const latestWriteBps = appIoWrite.at(-1);
+  const latestNetConn = appNetConn.at(-1) ?? 0;
 
   const savePolling = async () => {
     setSaveState("saving");
@@ -1110,8 +1133,8 @@ function NmonView({ meta }) {
           <h3>App Select · NJMON view</h3>
           <div className="filters">
             <select value={selected} onChange={e => setSelected(e.target.value)} style={{ flex: 1, minWidth: 200 }}>
-              {!(apps || []).length && <option value="">no apps detected yet</option>}
-              {(apps || []).map(a => (
+              {!appOptions.length && <option value="">no apps detected yet</option>}
+              {appOptions.map(a => (
                 <option key={a.name} value={a.name}>
                   {a.label}{a.status !== "ok" ? ` [${a.status}]` : ""}
                 </option>
@@ -1127,32 +1150,62 @@ function NmonView({ meta }) {
         </div>
 
         <div className="card">
-          <h3>Pinned Apps · always monitor</h3>
-          <div className="filters">
-            <input
-              placeholder="app name to pin…"
-              value={newApp}
-              onChange={e => setNewApp(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && addApp()}
-              style={{ flex: 1 }}
-            />
-            <button className="btn" onClick={addApp} disabled={pinState === "saving"}>
-              {pinState === "saving" ? "…" : pinState === "saved" ? "✓" : "pin"}
-            </button>
-          </div>
-          <div className="pin-list">
-            {pinnedApps.length === 0 && <div className="empty" style={{ padding: "10px 0" }}>no pinned apps — auto-discovery active</div>}
-            {pinnedApps.map(a => (
-              <div key={a} className="pin-item">
-                <span style={{ fontFamily: "var(--mono)", fontSize: 12 }}>{a}</span>
-                <button
-                  className="btn secondary"
-                  style={{ padding: "2px 8px", fontSize: 12 }}
-                  onClick={() => removeApp(a)}
-                >×</button>
+          <h3>Selected App Data</h3>
+          {!selected && <div className="empty">select an app to show process metrics</div>}
+          {selected && (
+            <>
+              <div className="focus-header" style={{ marginBottom: 12 }}>
+                <div>
+                  <h2>{selectedIdentity.label || selectedApp?.label || selected}</h2>
+                  <div className="svc-sub">
+                    pid {appHist?.app_process?.pid || "—"} · {selectedIdentity.service || "no service"} · sampled {fmtDuration(appHist?.timestamp?.snapshot_seconds)}
+                  </div>
+                </div>
+                <span className={`chip ${selectedApp?.status === "leak" ? "leak" : selectedApp?.status === "err" ? "err" : selectedApp?.status === "warn" ? "warn" : "ok"}`}>
+                  {selectedApp?.status || "ok"}
+                </span>
               </div>
-            ))}
-          </div>
+              <div className="kv" style={{ marginTop: 12 }}>
+                <span className="k">cpu</span><span>{fmtPct(latestAppCpu)}</span>
+                <span className="k">rss</span><span>{fmtBytes(latestAppRss)}</span>
+                <span className="k">threads</span><span>{appHist?.app_process?.threads ?? "—"}</span>
+                <span className="k">processes</span><span>{appHist?.app_process?.process_count ?? "—"}</span>
+                <span className="k">io read</span><span>{fmtBps(latestReadBps)}</span>
+                <span className="k">io write</span><span>{fmtBps(latestWriteBps)}</span>
+                <span className="k">connections</span><span>{latestNetConn}</span>
+                <span className="k">events</span><span>{appHist?.app_events?.errors || 0} err · {appHist?.app_events?.warns || 0} warn · {appHist?.app_events?.crashes || 0} crash</span>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="card">
+        <h3>Pinned Apps · always monitor</h3>
+        <div className="filters">
+          <input
+            placeholder="app name to pin…"
+            value={newApp}
+            onChange={e => setNewApp(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && addApp()}
+            style={{ flex: 1 }}
+          />
+          <button className="btn" onClick={addApp} disabled={pinState === "saving"}>
+            {pinState === "saving" ? "…" : pinState === "saved" ? "✓" : "pin"}
+          </button>
+        </div>
+        <div className="pin-list">
+          {pinnedApps.length === 0 && <div className="empty" style={{ padding: "10px 0" }}>no pinned apps — auto-discovery active</div>}
+          {pinnedApps.map(a => (
+            <div key={a} className="pin-item">
+              <span style={{ fontFamily: "var(--mono)", fontSize: 12 }}>{a}</span>
+              <button
+                className="btn secondary"
+                style={{ padding: "2px 8px", fontSize: 12 }}
+                onClick={() => removeApp(a)}
+              >×</button>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -1419,6 +1472,12 @@ function Logs() {
   const [level, setLevel] = useState("");
   const [service, setService] = useState("");
   const [regex, setRegex] = useState("");
+  const [window, setWindow] = useState("15m");
+  const [limit, setLimit] = useState("200");
+  const [clusterWindow, setClusterWindow] = useState("15m");
+  const [clusterLimit, setClusterLimit] = useState("20");
+  const [histWindow, setHistWindow] = useState("1h");
+  const [bucket, setBucket] = useState("1m");
   const bufRef = useRef([]);
   useWS("/ws/logs", (env) => {
     if (paused) return;
@@ -1427,6 +1486,35 @@ function Logs() {
     if (bufRef.current.length > 500) bufRef.current.shift();
     setBuffer([...bufRef.current]);
   });
+
+  const queryUrl = useMemo(() => {
+    const params = new URLSearchParams();
+    if (level) params.set("level", level);
+    if (service) params.set("service", service);
+    if (regex) params.set("regex", regex);
+    if (window) params.set("since", window);
+    if (limit) params.set("limit", limit);
+    return `/api/logs?${params.toString()}`;
+  }, [level, service, regex, window, limit]);
+
+  const clusterUrl = useMemo(() => {
+    const params = new URLSearchParams();
+    if (clusterWindow) params.set("since", clusterWindow);
+    if (clusterLimit) params.set("limit", clusterLimit);
+    return `/api/logs/cluster?${params.toString()}`;
+  }, [clusterWindow, clusterLimit]);
+
+  const histogramUrl = useMemo(() => {
+    const params = new URLSearchParams();
+    if (bucket) params.set("bucket", bucket);
+    if (histWindow) params.set("window", histWindow);
+    return `/api/logs/histogram?${params.toString()}`;
+  }, [bucket, histWindow]);
+
+  const [queryRows, queryErr] = usePoll(queryUrl, 5000);
+  const [clusters, clusterErr] = usePoll(clusterUrl, 10000);
+  const [histRows, histErr] = usePoll(histogramUrl, 15000);
+
   const rx = useMemo(() => { try { return regex ? new RegExp(regex, "i") : null; } catch { return null; } }, [regex]);
   const filtered = buffer.filter(r => {
     if (level && (r.level || "").toUpperCase() !== level.toUpperCase()) return false;
@@ -1434,8 +1522,37 @@ function Logs() {
     if (rx && !rx.test(r.message || "")) return false;
     return true;
   }).slice(-300);
+
+  const histBuckets = useMemo(() => {
+    const grouped = new Map();
+    for (const row of histRows || []) {
+      const key = row.bucket;
+      const item = grouped.get(key) || { bucket: key, ERROR: 0, WARN: 0, INFO: 0, DEBUG: 0, OTHER: 0 };
+      const lvl = (row.level || "INFO").toUpperCase();
+      if (["ERR", "ERROR", "CRIT", "FATAL"].includes(lvl)) item.ERROR += row.count || 0;
+      else if (lvl === "WARN") item.WARN += row.count || 0;
+      else if (lvl === "INFO" || lvl === "NOTICE") item.INFO += row.count || 0;
+      else if (lvl === "DEBUG") item.DEBUG += row.count || 0;
+      else item.OTHER += row.count || 0;
+      grouped.set(key, item);
+    }
+    return Array.from(grouped.values()).sort((a, b) => a.bucket.localeCompare(b.bucket));
+  }, [histRows]);
+
+  const querySummary = useMemo(() => {
+    const rows = queryRows || [];
+    const summary = { total: rows.length, error: 0, warn: 0, services: new Set() };
+    for (const row of rows) {
+      const lvl = (row.level || "").toUpperCase();
+      if (["ERR", "ERROR", "CRIT", "FATAL"].includes(lvl)) summary.error += 1;
+      if (lvl === "WARN") summary.warn += 1;
+      if (row.service) summary.services.add(row.service);
+    }
+    return { ...summary, services: summary.services.size };
+  }, [queryRows]);
+
   return (
-    <div>
+    <div className="col-stack">
       <div className="filters">
         <select value={level} onChange={e => setLevel(e.target.value)}>
           <option value="">all levels</option>
@@ -1444,22 +1561,139 @@ function Logs() {
           <option value="INFO">INFO</option>
           <option value="DEBUG">DEBUG</option>
         </select>
-        <input placeholder="service contains…" value={service} onChange={e => setService(e.target.value)} />
+        <input placeholder="service (exact for history, contains for live)…" value={service} onChange={e => setService(e.target.value)} />
         <input placeholder="regex" value={regex} onChange={e => setRegex(e.target.value)} style={{ minWidth: 220 }} />
+        <select value={window} onChange={e => setWindow(e.target.value)}>
+          {["1m", "5m", "15m", "1h", "6h", "24h"].map(s => <option key={s} value={s}>history {s}</option>)}
+        </select>
+        <select value={limit} onChange={e => setLimit(e.target.value)}>
+          {["50", "100", "200", "500", "1000"].map(s => <option key={s} value={s}>limit {s}</option>)}
+        </select>
         <button className="btn secondary" onClick={() => setPaused(p => !p)}>{paused ? "▶ resume" : "⏸ pause"}</button>
         <button className="btn secondary" onClick={() => { bufRef.current = []; setBuffer([]); }}>clear</button>
         <span style={{ color: "var(--fg-3)", alignSelf: "center", fontFamily: "var(--mono)", fontSize: 11 }}>{filtered.length}/{buffer.length} rows</span>
       </div>
-      <div className="logs">
-        {filtered.length === 0 && <div className="empty">no matching log lines</div>}
-        {filtered.map((r, i) => (
-          <div key={i} className="log-row">
-            <span className="ts">{tsToHMS(r.ts)}</span>
-            <span className={`lv ${(r.level || "INFO").toUpperCase()}`}>{(r.level || "INFO").toUpperCase()}</span>
-            <span className="svc">{r.service || "—"}</span>
-            <span className="msg">{r.message}</span>
+
+      <div className="grid three log-summary-grid">
+        <div className="card">
+          <h3>Historical Search</h3>
+          <div className="kv" style={{ gridTemplateColumns: "110px 1fr" }}>
+            <span className="k">rows</span><span>{querySummary.total}</span>
+            <span className="k">errors</span><span className={querySummary.error ? "chip err" : "chip ok"}>{querySummary.error}</span>
+            <span className="k">warns</span><span className={querySummary.warn ? "chip warn" : "chip ok"}>{querySummary.warn}</span>
+            <span className="k">services</span><span>{querySummary.services}</span>
           </div>
-        ))}
+          {queryErr && <div className="svc-sub" style={{ color: "var(--err)", marginTop: 10 }}>{queryErr}</div>}
+        </div>
+        <div className="card">
+          <h3>Error Clusters</h3>
+          <div className="filters" style={{ marginBottom: 0 }}>
+            <select value={clusterWindow} onChange={e => setClusterWindow(e.target.value)}>
+              {["5m", "15m", "1h", "6h", "24h"].map(s => <option key={s} value={s}>last {s}</option>)}
+            </select>
+            <select value={clusterLimit} onChange={e => setClusterLimit(e.target.value)}>
+              {["10", "20", "40", "80"].map(s => <option key={s} value={s}>top {s}</option>)}
+            </select>
+          </div>
+          <div className="svc-sub">{(clusters || []).length} grouped signatures</div>
+          {clusterErr && <div className="svc-sub" style={{ color: "var(--err)" }}>{clusterErr}</div>}
+        </div>
+        <div className="card">
+          <h3>Histogram</h3>
+          <div className="filters" style={{ marginBottom: 0 }}>
+            <select value={histWindow} onChange={e => setHistWindow(e.target.value)}>
+              {["15m", "1h", "6h", "24h"].map(s => <option key={s} value={s}>window {s}</option>)}
+            </select>
+            <select value={bucket} onChange={e => setBucket(e.target.value)}>
+              {["1m", "5m", "1h"].map(s => <option key={s} value={s}>bucket {s}</option>)}
+            </select>
+          </div>
+          <div className="svc-sub">{histBuckets.length} time buckets</div>
+          {histErr && <div className="svc-sub" style={{ color: "var(--err)" }}>{histErr}</div>}
+        </div>
+      </div>
+
+      <div className="grid two log-analysis-grid">
+        <div className="card">
+          <h3>Historical Results</h3>
+          <div className="logs">
+            {(queryRows || []).length === 0 && <div className="empty">no matching stored log lines</div>}
+            {(queryRows || []).map((r, i) => (
+              <div key={i} className="log-row">
+                <span className="ts">{tsToHMS(r.ts)}</span>
+                <span className={`lv ${(r.level || "INFO").toUpperCase()}`}>{(r.level || "INFO").toUpperCase()}</span>
+                <span className="svc">{r.service || "—"}</span>
+                <span className="msg">{r.message}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="card">
+          <h3>Clustered Errors</h3>
+          <div className="cluster-list">
+            {(!clusters || clusters.length === 0) && <div className="empty">no clusters for the selected window</div>}
+            {(clusters || []).map((c, i) => (
+              <div key={i} className="cluster-card">
+                <div className="cluster-top">
+                  <span className={`chip ${["ERR", "ERROR", "CRIT", "FATAL"].includes((c.level || "").toUpperCase()) ? "err" : (c.level || "").toUpperCase() === "WARN" ? "warn" : "info"}`}>
+                    {c.level || "LOG"}
+                  </span>
+                  <span className="cluster-meta">{c.count} events</span>
+                  <span className="cluster-meta">{c.service || "—"}</span>
+                </div>
+                <div className="cluster-sample">{c.sample}</div>
+                <div className="svc-sub">first {tsToHMS(c.first)} · last {tsToHMS(c.last)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid two log-analysis-grid">
+        <div className="card">
+          <h3>Log Histogram</h3>
+          <table style={{ fontSize: 11 }}>
+            <thead>
+              <tr>
+                <th>Bucket</th>
+                <th className="num">Errors</th>
+                <th className="num">Warns</th>
+                <th className="num">Info</th>
+                <th className="num">Debug</th>
+                <th className="num">Other</th>
+              </tr>
+            </thead>
+            <tbody>
+              {histBuckets.length === 0 && <tr><td colSpan="6" className="empty">no histogram data</td></tr>}
+              {histBuckets.map((row, i) => (
+                <tr key={i}>
+                  <td>{tsToHMS(row.bucket)}</td>
+                  <td className="num">{row.ERROR}</td>
+                  <td className="num">{row.WARN}</td>
+                  <td className="num">{row.INFO}</td>
+                  <td className="num">{row.DEBUG}</td>
+                  <td className="num">{row.OTHER}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="card">
+          <h3>Live Tail</h3>
+          <div className="logs">
+            {filtered.length === 0 && <div className="empty">no matching live log lines</div>}
+            {filtered.map((r, i) => (
+              <div key={i} className="log-row">
+                <span className="ts">{tsToHMS(r.ts)}</span>
+                <span className={`lv ${(r.level || "INFO").toUpperCase()}`}>{(r.level || "INFO").toUpperCase()}</span>
+                <span className="svc">{r.service || "—"}</span>
+                <span className="msg">{r.message}</span>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );

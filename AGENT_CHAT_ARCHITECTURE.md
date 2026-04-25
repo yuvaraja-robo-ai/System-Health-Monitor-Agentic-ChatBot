@@ -1,5 +1,9 @@
 # Agent Chat Architecture
 
+PlantUML sequence diagram:
+
+- [docs/agent-chat-sequence.puml](/tmp/System-Health-Monitor-Agentic-ChatBot/docs/agent-chat-sequence.puml:1)
+
 How the chatbot works, how agent code is wired in, and what can be improved.
 
 ---
@@ -38,11 +42,13 @@ User question
 
 | File | Role |
 |------|------|
-| `app/api/chat.py` | HTTP endpoint, orchestrates all 3 layers |
-| `app/agent/diagnose.py` | Collects live system context into a text digest |
+| `app/api/chat.py` | HTTP endpoint, orchestrates all 3 layers + agentic loop |
+| `app/agent/diagnose.py` | Collects live system context into a text digest (async) |
 | `app/agent/kb.py` | Loads KB markdown files, builds FAISS index, runs semantic search |
 | `app/agent/embed.py` | Wraps `sentence-transformers` to produce embedding vectors |
-| `app/agent/llm.py` | HTTP client for Ollama (`/api/chat`) and llama.cpp (`/completion`) |
+| `app/agent/llm.py` | HTTP client for Ollama (`/api/chat`) and llama.cpp (`/v1/chat/completions`) |
+| `app/agent/keywords.json` | **Keyword routing config** — all topic/metric/reasoning keyword groups |
+| `app/agent/keywords.py` | Thin loader for `keywords.json` with `lru_cache` |
 | `data/kb/*.md` | Runbook markdown files (manually written + auto-generated stubs) |
 | `data/kb/faiss.index` | Persisted FAISS flat inner-product index |
 | `data/kb/meta.json` | Metadata for each KB doc (title, tags, steps) |
@@ -69,28 +75,50 @@ anomaly_detector.current() → active z-score anomalies
 leak_detector.current()    → active memory leak suspects
 ```
 
-**Keywords handled (word-boundary matched):**
+**Named-process routing (runs first):**
 
-| Topic | Trigger words |
-|-------|--------------|
-| CPU | cpu, processor, core, utilization |
-| Memory | memory, mem, ram |
-| Swap | swap |
-| Disk | disk, storage, space, filesystem, mount |
-| Temperature | temp, thermal, hot, heat, celsius, degrees |
-| GPU | gpu, graphics, cuda, vram |
-| Power | power, watt, energy, consumption |
-| Fan | fan, cooling, rpm |
-| Network | network, net, bandwidth, rx, tx, throughput |
-| Uptime | uptime, up time, running for, how long |
-| Health | health, score, overall status, system status |
-| PSI | pressure, psi, stall |
-| Anomalies | anomaly, anomalies, spike, unusual, abnormal |
-| Leaks | leak, memory leak, rss climbing |
-| Crashes | crash, crashes, killed, oom kill, segfault |
-| Processes | process, top process, pid, what is running |
-| Load avg | load average, load avg, load 1, load 5 |
-| Engines | emc, memory controller, dla, nvenc, nvdec, vic |
+If a running process name appears verbatim in the question and it's not a
+reasoning question, the answer is scoped to that process:
+
+```
+"what is llama-server cpu usage"
+  → matches "llama-server" in process list → returns process-specific stats
+
+"how can I optimize llama-server memory"
+  → "optimize" is a reasoning keyword → falls through to LLM
+```
+
+**Keyword routing (word-boundary regex, config-driven):**
+
+All keyword groups are defined in `app/agent/keywords.json` — edit that file
+to add new topics or synonyms without touching Python code.
+
+| Topic | Group key | Sample keywords |
+|-------|-----------|-----------------|
+| CPU | `cpu` | cpu, processor, core, utilization |
+| Memory | `memory` | memory, mem, ram |
+| Swap | `swap` | swap |
+| Disk | `disk` | disk, storage, space, filesystem, mount |
+| Temperature | `temperature` | temp, thermal, hot, heat, celsius, degrees |
+| GPU | `gpu` | gpu, graphics, cuda, vram |
+| Power | `power` | power, watt, energy, consumption |
+| Fan | `fan` | fan, cooling, rpm |
+| Network | `network` | network, net, bandwidth, rx, tx, throughput |
+| Uptime | `uptime` | uptime, up time, running for, how long |
+| Health | `health` | health, score, overall status, system status |
+| PSI | `pressure` | pressure, psi, stall |
+| Anomalies | `anomaly` | anomaly, anomalies, spike, unusual, abnormal |
+| Leaks | `leak` | leak, memory leak, rss climbing |
+| Crashes | `crash` | crash, crashes, killed, oom kill, segfault |
+| Processes | `process` | process, top process, pid, what is running |
+| Load avg | `load_average` | load average, load avg, load 1, load 5 |
+| Engines | `emc` | emc, memory controller, dla, nvenc, nvdec, vic |
+
+**Reasoning detection (`reasoning` group in `keywords.json`):**
+
+Questions containing reasoning keywords (`why`, `how can`, `optimize`, `fix`,
+`diagnose`, `recommend`, etc.) bypass the direct-answer layer and go straight
+to the LLM agentic loop.
 
 **Output example** (question: "what is the CPU usage"):
 ```
@@ -222,10 +250,10 @@ POST /api/chat
 {"model": "llama3.2:3b", "messages": [...], "stream": false}
 ```
 
-**llama.cpp** (`/completion` — messages flattened to a single prompt string):
+**llama.cpp** (`/v1/chat/completions` with `messages` array):
 ```python
-POST /completion
-{"prompt": "User: ...\nAssistant: ...\nUser: why?\nAssistant:", ...}
+POST /v1/chat/completions
+{"model": "...", "messages": [...], "stream": false}
 ```
 
 **Backend tag:** `"ollama+direct"` (LLM refined live data), `"ollama"` (pure
@@ -259,7 +287,7 @@ LLM context window (~500 tokens).
 ```bash
 # LLM backend (optional — Layers 1+2 work without it)
 SH_OLLAMA_URL=http://localhost:11434   # Ollama server
-SH_LLAMA_URL=http://localhost:8081     # llama.cpp server
+SH_LLAMA_URL=http://127.0.0.1:8080     # llama.cpp server
 SH_LLM_MODEL=llama3.2:3b              # model name for Ollama
 SH_LLM_TIMEOUT_S=30                   # LLM request timeout
 
@@ -300,9 +328,9 @@ app/api/chat.py  chat_endpoint()
   │     ├─ embed.embed([text])                 [sentence-transformers]
   │     └─ faiss_index.search(vec, k)
   │
-  └─→ llm.chat(messages, system=SYSTEM_PROMPT) [if configured]
+      └─→ llm.chat(messages, system=SYSTEM_PROMPT) [if configured]
         ├─ _ollama_chat()  → POST /api/chat    [Ollama]
-        └─ _llama()        → POST /completion  [llama.cpp]
+        └─ _llama_chat()   → POST /v1/chat/completions  [llama.cpp]
   │
   ▼
 {"answer": "...", "backend": "direct|kb|ollama+direct|none", "latency_ms": N}
@@ -314,16 +342,17 @@ app/api/chat.py  chat_endpoint()
 
 ### 9.1 Smarter Query Routing
 
-**Current:** Keyword regex decides Layer 1 vs Layer 2/3. Words must match exactly.
+**Current:** Keyword regex decides Layer 1 vs Layer 2/3. Named-process routing
+now handles `"llama-server cpu usage"` vs `"optimize llama-server memory"` via
+reasoning-keyword detection. All keywords are in `app/agent/keywords.json`.
 
-**Problem:** "show me how busy the processor is" misses "cpu" keyword → falls to
-Layer 2/3 unnecessarily.
+**Remaining gap:** Paraphrased questions ("show me how busy the processor is")
+miss the `cpu` keyword and fall to Layer 2/3 unnecessarily.
 
 **Fix options:**
+- Add more synonyms to `keywords.json` (zero-code, low risk)
 - Lightweight intent classifier (TF-IDF or small embedding similarity against
   canonical question templates)
-- OR: always run Layer 1 first as a data prefetch, then route based on whether
-  the question also needs reasoning (`_needs_llm()` already does this partially)
 
 ---
 
@@ -373,22 +402,38 @@ Browser stores `session_id` in `localStorage`.
 
 ---
 
-### 9.4 Tool-Use / Function Calling
+### 9.4 Tool-Use / Function Calling ✅ Implemented
 
-**Current:** LLM only reads injected context — it cannot request more data.
+**Implemented in `_run_agentic_chat` (`app/api/chat.py`).**
 
-**Fix:** Add structured tool calls so LLM can pull specific data on demand:
+The agentic loop follows the pattern: seed context → LLM call → tool call →
+result → next LLM call (with full history) → repeat up to `max_iterations`.
 
 ```
-Tools available to LLM:
-  get_process_detail(pid)   → full process stats
-  get_log_sample(service, level, n) → recent log lines
-  get_metric_history(metric, window) → time series
-  restart_service(name)     → requires explicit user approval
+messages = [context, ack]               ← grounding (collected once)
+         + [user turn 1]                ← original question
+
+Iteration 1: LLM → {"tool_name": "get_live_context", ...}
+messages += [assistant, tool_result]
+
+Iteration 2: LLM → {"tool_name": "search_kb", ...}
+messages += [assistant, tool_result]
+
+Iteration 3: LLM → {"answer": "..."}   ← final response
 ```
 
-Ollama and llama.cpp both support JSON-mode / tool-call formats. The loop:
-LLM outputs tool call → server executes → result injected back → LLM continues.
+Tools available to the LLM agent:
+
+| Tool | Returns |
+|------|---------|
+| `get_direct_answer(question)` | Live metric snapshot for a specific query |
+| `get_live_context(window, services, pids)` | Full diagnostic digest |
+| `search_kb(query, window, services, pids)` | KB runbook matches + steps |
+| `get_log_status(window, level, service, regex)` | Log ingestion status |
+| `get_log_clusters(window, limit)` | Grouped repeated error signatures |
+
+**Remaining gap:** `restart_service` and other write operations are not
+implemented — those require explicit user approval flow (out of scope).
 
 ---
 

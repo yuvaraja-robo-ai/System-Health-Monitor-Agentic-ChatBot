@@ -124,25 +124,30 @@ def proc_rss_range(pid: int, start_s: int, end_s: int) -> tuple[int | None, int 
 def app_history(app: str, key: str, since_s: int, until_s: int, step_s: int) -> list[tuple[int, float]]:
     c = _conn()
     table = "app_metric"
+    bucket_s = step_s
     if step_s >= 60:
-        table = "metric_1m"
+        table = "app_metric_1m"
+        bucket_s = 60
     elif step_s >= 10:
-        table = "metric_10s"
-    if table == "app_metric":
+        table = "app_metric_10s"
+        bucket_s = 10
+
+    if table != "app_metric" and step_s == bucket_s:
         rows = c.execute(
-            """
+            f"""
             SELECT ts, value
-            FROM app_metric
+            FROM {table}
             WHERE app=? AND key=? AND ts BETWEEN ? AND ?
             ORDER BY ts
             """,
             (app, key, since_s, until_s),
         ).fetchall()
         return [(int(ts), float(value)) for ts, value in rows]
+
     rows = c.execute(
-        """
+        f"""
         SELECT (ts/?)*? AS bucket, AVG(value)
-        FROM app_metric
+        FROM {table}
         WHERE app=? AND key=? AND ts BETWEEN ? AND ?
         GROUP BY bucket
         ORDER BY bucket
@@ -187,7 +192,9 @@ def prune() -> None:
         c.execute("DELETE FROM metric_10s WHERE ts < ?", (now - settings.history_10s_retention_s,))
         c.execute("DELETE FROM metric_1m WHERE ts < ?", (now - settings.history_1m_retention_s,))
         c.execute("DELETE FROM proc_rss WHERE ts < ?", (now - 86400,))
-        c.execute("DELETE FROM app_metric WHERE ts < ?", (now - settings.history_1m_retention_s,))
+        c.execute("DELETE FROM app_metric WHERE ts < ?", (now - settings.history_raw_retention_s,))
+        c.execute("DELETE FROM app_metric_10s WHERE ts < ?", (now - settings.history_10s_retention_s,))
+        c.execute("DELETE FROM app_metric_1m WHERE ts < ?", (now - settings.history_1m_retention_s,))
         c.execute("DELETE FROM event WHERE ts < ?", (now - 7 * 86400,))
 
 
@@ -211,6 +218,24 @@ def downsample() -> None:
             SELECT (ts/60)*60, key, AVG(value) FROM metric_10s
             WHERE ts < ? AND ts >= ?
             GROUP BY (ts/60), key
+            """,
+            (now - 1200, now - 3600),
+        )
+        c.execute(
+            """
+            INSERT OR REPLACE INTO app_metric_10s(ts,app,key,value)
+            SELECT (ts/10)*10, app, key, AVG(value) FROM app_metric
+            WHERE ts < ? AND ts >= ?
+            GROUP BY (ts/10), app, key
+            """,
+            (cut, cut - 600),
+        )
+        c.execute(
+            """
+            INSERT OR REPLACE INTO app_metric_1m(ts,app,key,value)
+            SELECT (ts/60)*60, app, key, AVG(value) FROM app_metric_10s
+            WHERE ts < ? AND ts >= ?
+            GROUP BY (ts/60), app, key
             """,
             (now - 1200, now - 3600),
         )

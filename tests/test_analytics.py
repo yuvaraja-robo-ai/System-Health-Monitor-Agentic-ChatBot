@@ -279,3 +279,76 @@ def test_flatten_njmon_empty_list():
     nested = {"history": []}
     flat = _flatten_njmon(nested)
     assert flat["history"] == []
+
+
+# ──────────────────────────────────────────────
+# timeline / app history regression coverage
+# ──────────────────────────────────────────────
+
+
+def test_timeline_uses_cluster_last_timestamp(monkeypatch):
+    from app.api.timeline import timeline
+
+    monkeypatch.setattr('app.api.timeline.ldb.cluster_logs', lambda since, limit=50: [
+        {
+            'level': 'ERROR',
+            'service': 'svc',
+            'count': 3,
+            'sample': 'boom',
+            'last': '2024-01-01T00:00:05',
+        }
+    ])
+    monkeypatch.setattr('app.api.timeline.sdb.recent_events', lambda *args, **kwargs: [])
+    monkeypatch.setattr('app.api.timeline.anomaly_detector.history', lambda limit=500: [])
+
+    out = timeline(window=3600, limit=20)
+    assert out['events'][0]['ts'] == 1704067205
+
+
+def test_app_history_uses_app_rollups(tmp_path, monkeypatch):
+    from app.db import sqlite as sdb
+    from app.config import settings
+
+    old_conn = getattr(sdb._LOCAL, 'conn', None)
+    if old_conn is not None:
+        old_conn.close()
+        delattr(sdb._LOCAL, 'conn')
+
+    monkeypatch.setattr(settings, 'data_dir', tmp_path)
+    sdb.init()
+    c = sdb._conn()
+    c.execute('INSERT OR REPLACE INTO app_metric_10s(ts, app, key, value) VALUES(?,?,?,?)', (10, 'svc', 'cpu', 12.5))
+
+    rows = sdb.app_history('svc', 'cpu', 0, 20, 10)
+    assert rows == [(10, 12.5)]
+
+
+
+def test_app_monitor_uses_unit_pid_for_pinned_services(monkeypatch):
+    from app.collectors.app_monitor_collector import AppMonitorCollector
+    from app.config import settings
+
+    collector = AppMonitorCollector()
+    collector._last_ts = 95
+
+    monkeypatch.setattr(settings, 'monitored_apps', ['custom-api'])
+    monkeypatch.setattr('app.collectors.app_monitor_collector.hub.latest', lambda topic: {
+        'data': {
+            'procs': [
+                {'pid': 321, 'name': 'gunicorn', 'cpu': 12.0, 'rss': 100 * 1024 * 1024, 'threads': 8},
+            ]
+        }
+    } if topic == 'processes' else None)
+    monkeypatch.setattr('app.collectors.app_monitor_collector.ldb.query_logs', lambda **kwargs: [])
+    monkeypatch.setattr('app.collectors.app_monitor_collector.sdb.recent_events', lambda *args, **kwargs: [])
+    monkeypatch.setattr('app.collectors.app_monitor_collector.sdb.app_names', lambda since: [])
+    monkeypatch.setattr(collector, '_process_stats', lambda ts: [
+        {'pid': 321, 'name': 'gunicorn', 'io_read_bps': 10.0, 'io_write_bps': 20.0, 'net_conn': 3.0},
+    ])
+    monkeypatch.setattr(collector, '_unit_pid', lambda app: 321 if app == 'custom-api' else None)
+
+    rows = collector._sample(100)
+    metrics = {(app, key): value for _, app, key, value in rows}
+    assert metrics[('custom-api', 'cpu')] == 12.0
+    assert metrics[('custom-api', 'rss')] == 100 * 1024 * 1024
+    assert metrics[('custom-api', 'net_conn')] == 3.0

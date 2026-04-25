@@ -1,4 +1,5 @@
 # Python
+.claude/*
 __pycache__/
 *.py[cod]
 *.pyo
@@ -40,6 +41,11 @@ data/kb/auto_*.md
 # IDE
 .idea/
 .vscode/
+.claude/
+.codex
+.cursor/
+.windsurf/
+.roo/
 *.swp
 *.swo
 .DS_Store

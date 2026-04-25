@@ -13,27 +13,27 @@ Use this document when:
 - checking whether a runtime API is sufficient for a wireframe
 - planning missing implementation work from design intent
 
-For the engineering implementation state, see [IMPLEMENTATION.md](/home/ds/Documents/Development/SchoolofAI/SystemHealth/IMPLEMENTATION.md:1).
+For the engineering implementation state, see [IMPLEMENTATION.md](/tmp/System-Health-Monitor-Agentic-ChatBot/design/docs/IMPLEMENTATION.md:1).
 
 ## Design Source Files
 
 Main design entry:
 
-- [SystemHealth Wireframes.html](/home/ds/Documents/Development/SchoolofAI/SystemHealth/SystemHealth%20Wireframes.html:1)
+- [SystemHealth Wireframes.html](/tmp/System-Health-Monitor-Agentic-ChatBot/design/wireframes/SystemHealth%20Wireframes.html:1)
 
 Supporting design files:
 
-- [design-canvas.jsx](/home/ds/Documents/Development/SchoolofAI/SystemHealth/design-canvas.jsx:1)
-- [primitives.jsx](/home/ds/Documents/Development/SchoolofAI/SystemHealth/primitives.jsx:1)
-- [styles.css](/home/ds/Documents/Development/SchoolofAI/SystemHealth/styles.css:1)
+- [design-canvas.jsx](/tmp/System-Health-Monitor-Agentic-ChatBot/design/wireframes/design-canvas.jsx:1)
+- [primitives.jsx](/tmp/System-Health-Monitor-Agentic-ChatBot/design/wireframes/primitives.jsx:1)
+- [styles.css](/tmp/System-Health-Monitor-Agentic-ChatBot/design/wireframes/styles.css:1)
 
 Screen wireframes:
 
-- [wf1-cockpit.jsx](/home/ds/Documents/Development/SchoolofAI/SystemHealth/wf1-cockpit.jsx:1)
-- [wf2-sidebar.jsx](/home/ds/Documents/Development/SchoolofAI/SystemHealth/wf2-sidebar.jsx:1)
-- [wf3-terminal.jsx](/home/ds/Documents/Development/SchoolofAI/SystemHealth/wf3-terminal.jsx:1)
-- [wf4-editorial.jsx](/home/ds/Documents/Development/SchoolofAI/SystemHealth/wf4-editorial.jsx:1)
-- [wf5-leakhunter.jsx](/home/ds/Documents/Development/SchoolofAI/SystemHealth/wf5-leakhunter.jsx:1)
+- [wf1-cockpit.jsx](/tmp/System-Health-Monitor-Agentic-ChatBot/design/wireframes/wf1-cockpit.jsx:1)
+- [wf2-sidebar.jsx](/tmp/System-Health-Monitor-Agentic-ChatBot/design/wireframes/wf2-sidebar.jsx:1)
+- [wf3-terminal.jsx](/tmp/System-Health-Monitor-Agentic-ChatBot/design/wireframes/wf3-terminal.jsx:1)
+- [wf4-editorial.jsx](/tmp/System-Health-Monitor-Agentic-ChatBot/design/wireframes/wf4-editorial.jsx:1)
+- [wf5-leakhunter.jsx](/tmp/System-Health-Monitor-Agentic-ChatBot/design/wireframes/wf5-leakhunter.jsx:1)
 
 ## How To Use The Wireframes
 
@@ -199,10 +199,10 @@ Any runtime screen derived from the wireframes should preserve host-aware behavi
 
 This design rule comes from:
 
-- [SystemHealth Wireframes.html](/home/ds/Documents/Development/SchoolofAI/SystemHealth/SystemHealth%20Wireframes.html:1)
-- [wf1-cockpit.jsx](/home/ds/Documents/Development/SchoolofAI/SystemHealth/wf1-cockpit.jsx:1)
-- [wf2-sidebar.jsx](/home/ds/Documents/Development/SchoolofAI/SystemHealth/wf2-sidebar.jsx:1)
-- [wf3-terminal.jsx](/home/ds/Documents/Development/SchoolofAI/SystemHealth/wf3-terminal.jsx:1)
+- [SystemHealth Wireframes.html](/tmp/System-Health-Monitor-Agentic-ChatBot/design/wireframes/SystemHealth%20Wireframes.html:1)
+- [wf1-cockpit.jsx](/tmp/System-Health-Monitor-Agentic-ChatBot/design/wireframes/wf1-cockpit.jsx:1)
+- [wf2-sidebar.jsx](/tmp/System-Health-Monitor-Agentic-ChatBot/design/wireframes/wf2-sidebar.jsx:1)
+- [wf3-terminal.jsx](/tmp/System-Health-Monitor-Agentic-ChatBot/design/wireframes/wf3-terminal.jsx:1)
 
 ## Design-To-Implementation Checklist
 

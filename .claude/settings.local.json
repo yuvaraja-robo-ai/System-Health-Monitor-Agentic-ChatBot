@@ -2,28 +2,16 @@
   "permissions": {
     "allow": [
       "Bash(python3 -m compileall -q app)",
-      "Bash(python3 *)",
-      "Bash(kill 93322])",
-      "Bash(kill -9 93322)",
       "Bash(curl -s \"http://localhost:8080/api/apps?window=6h\")",
       "Bash(curl -v --max-time 5 \"http://localhost:8080/api/apps?window=6h\")",
       "Bash(curl -sv --max-time 15 \"http://localhost:8082/api/apps?window=6h\")",
       "Bash(curl -s --max-time 60 \"http://localhost:8082/api/apps?window=6h\")",
       "Bash(curl -s --max-time 5 \"http://localhost:8082/api/meta\")",
       "Bash(time curl *)",
-      "Bash(cat)",
-      "Read(//tmp/**)",
-      "WebSearch",
       "Bash(pip show *)",
-      "Bash(pip3 install *)",
       "Bash(awk 'NR>1 {print $4}')",
       "Bash(grep -oP ':\\\\K\\\\d+$')",
-      "Bash(kill -0 100452)",
-      "Bash(kill -TERM 100950)",
-      "Bash(kill -9 100950)",
-      "Bash(kill -9 104827)",
-      "Bash(awk 'NR>1 {print $2}')",
-      "Bash(xargs -r kill -9)"
+      "Bash(awk 'NR>1 {print $2}')"
     ]
   }
 }

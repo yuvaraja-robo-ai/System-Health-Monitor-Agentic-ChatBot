@@ -13,6 +13,9 @@ POST /api/chat
 
 from __future__ import annotations
 
+import json
+import inspect
+import asyncio
 import re
 import time
 from typing import Any
@@ -21,7 +24,9 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.agent import kb, llm
-from app.agent.diagnose import collect_context, _digest_text
+from app.agent import keywords as kw_cfg
+from app.agent.diagnose import collect_context_async, _digest_text
+from app.db import duckdb as ldb
 from app.hub import hub
 
 router = APIRouter(prefix="/api", tags=["chat"])
@@ -31,6 +36,35 @@ _SYSTEM_PROMPT = (
     "Live system context is already injected. Be concise, name specific processes/services. "
     "No markdown headers. Max 6 lines."
 )
+
+_AGENT_CONTEXT_ACK = "Understood. I have the live system context. I will use tools for specific queries."
+
+_AGENT_SYSTEM_PROMPT = """You are an embedded ops agent for Linux/Jetson system monitoring.
+
+You can inspect current system state with tools before answering.
+
+Available tools:
+1. get_direct_answer(question: str)
+   Returns a direct live-metric answer for CPU, memory, disk, GPU, health, processes, crashes, leaks, anomalies, and related metrics.
+2. get_live_context(window: str | optional, services: list[str] | optional, pids: list[int] | optional)
+   Returns a compact live diagnostic digest for the selected scope.
+3. search_kb(query: str, window: str | optional, services: list[str] | optional, pids: list[int] | optional)
+   Returns the most relevant local KB/runbook matches and steps.
+4. get_log_status(window: str | optional, level: str | optional, service: str | optional, regex: str | optional)
+   Returns whether logs are actually present in storage, plus recent counts and examples.
+5. get_log_clusters(window: str | optional, limit: int | optional)
+   Returns grouped repeated error signatures from stored logs.
+
+Respond in exactly one JSON object:
+- Tool use: {"tool_name":"...", "tool_arguments": {...}}
+- Final answer: {"answer":"..."}
+
+Rules:
+- Return JSON only. No markdown fences.
+- Use tools for live metrics, diagnostics, and runbook steps. Do not invent data.
+- You may call multiple tools across turns.
+- Keep the final answer concise and actionable, max 6 lines.
+"""
 
 
 # ──────────────────────────────────────────────────────────────
@@ -64,6 +98,175 @@ def _kw(q: str, *words: str) -> bool:
     return any(re.search(r'\b' + re.escape(w) + r'\b', q) for w in words)
 
 
+def _kw_metric(q: str, metric: str) -> bool:
+    """Match query against a named keyword group from keywords.json."""
+    kws = kw_cfg.metric_keywords(metric)
+    excl = kw_cfg.metric_exclude(metric)
+    return bool(kws) and _kw(q, *kws) and (not excl or not _kw(q, *excl))
+
+
+def _sanitize_scope(scope: dict[str, Any] | None) -> dict[str, Any]:
+    scope = scope or {}
+    out: dict[str, Any] = {}
+    window = scope.get("window")
+    if isinstance(window, str) and window.strip():
+        out["window"] = window.strip()
+    services = scope.get("services")
+    if isinstance(services, list):
+        out["services"] = [str(s) for s in services if str(s).strip()]
+    pids = scope.get("pids")
+    if isinstance(pids, list):
+        cleaned: list[int] = []
+        for pid in pids:
+            try:
+                cleaned.append(int(pid))
+            except (TypeError, ValueError):
+                continue
+        out["pids"] = cleaned
+    return out
+
+
+def _merge_scope(base_scope: dict[str, Any] | None, overrides: dict[str, Any] | None) -> dict[str, Any]:
+    merged = _sanitize_scope(base_scope)
+    extra = _sanitize_scope(overrides)
+    for key in ("window", "services", "pids"):
+        if key in extra:
+            merged[key] = extra[key]
+    return merged
+
+
+def _strip_code_fences(text: str) -> str:
+    text = text.strip()
+    if not text.startswith("```"):
+        return text
+    lines = text.splitlines()
+    if lines:
+        lines = lines[1:]
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    text = "\n".join(lines).strip()
+    if text.lower().startswith("json"):
+        text = text[4:].strip()
+    return text
+
+
+def _parse_agent_response(text: str) -> dict[str, Any]:
+    text = _strip_code_fences(text)
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if match:
+        parsed = json.loads(match.group(0))
+        if isinstance(parsed, dict):
+            return parsed
+    raise ValueError(f"Could not parse agent response: {text[:200]}")
+
+
+def _normalize_tool_arguments(parsed: dict[str, Any], tool_name: str, tools: dict[str, Any]) -> dict[str, Any]:
+    candidate_keys = (
+        "tool_arguments",
+        "tool_args",
+        "arguments",
+        "args",
+        "parameters",
+        "params",
+        "input",
+        "inputs",
+    )
+
+    raw = None
+    for key in candidate_keys:
+        if key in parsed:
+            raw = parsed[key]
+            break
+
+    if raw is None:
+        extras = {k: v for k, v in parsed.items() if k not in {"tool_name", "answer", "name"}}
+        if extras:
+            raw = extras
+
+    if isinstance(raw, dict):
+        return raw
+
+    tool = tools.get(tool_name)
+    if raw is not None and tool:
+        params = [p for p in inspect.signature(tool).parameters if p != "self"]
+        if len(params) == 1:
+            return {params[0]: raw}
+
+    return {}
+
+
+def _window_to_seconds(window: str | None) -> int:
+    if not window:
+        return int(time.time()) - 900
+    known = {
+        "1m": 60,
+        "5m": 300,
+        "15m": 900,
+        "1h": 3600,
+        "6h": 21600,
+        "24h": 86400,
+    }
+    if window in known:
+        return int(time.time()) - known[window]
+    try:
+        return int(time.time()) - int(window)
+    except (TypeError, ValueError):
+        return int(time.time()) - 900
+
+
+def _log_status(window: str = "15m", level: str | None = None, service: str | None = None, regex: str | None = None) -> str:
+    since_s = _window_to_seconds(window)
+    rows = ldb.query_logs(level=level, service=service, regex=regex, since_s=since_s, limit=20)
+    clusters = ldb.cluster_logs(since_s, limit=5)
+    if not rows:
+        return (
+            f"Logs available check: no stored log rows found for window {window}."
+            + (f" service={service}." if service else "")
+            + (f" level={level}." if level else "")
+            + " API is reachable but ingestion may be empty, filters may be too narrow, or the source is inactive."
+        )
+
+    services = sorted({r.get("service") for r in rows if r.get("service")})
+    levels: dict[str, int] = {}
+    for row in rows:
+        lvl = str(row.get("level") or "INFO").upper()
+        levels[lvl] = levels.get(lvl, 0) + 1
+
+    lines = [
+        f"Logs available check: {len(rows)} stored row(s) found in {window}.",
+        "Levels: " + ", ".join(f"{k}={v}" for k, v in sorted(levels.items())),
+    ]
+    if services:
+        lines.append("Services: " + ", ".join(services[:5]))
+    if clusters:
+        top = clusters[0]
+        lines.append(
+            f"Top cluster: {top.get('service') or '—'} {top.get('level') or 'LOG'} x{top.get('count', 0)}"
+        )
+    sample = rows[0]
+    lines.append(f"Latest sample: [{sample.get('level')}] {sample.get('service') or '—'} {sample.get('message')}")
+    return "\n".join(lines)
+
+
+def _log_clusters(window: str = "15m", limit: int = 10) -> str:
+    rows = ldb.cluster_logs(_window_to_seconds(window), limit=limit)
+    if not rows:
+        return f"No log clusters found for window {window}."
+    lines = [f"{len(rows)} log cluster(s) in {window}:"]
+    for row in rows[:limit]:
+        lines.append(
+            f"{row.get('service') or '—'} {row.get('level') or 'LOG'} x{row.get('count', 0)}: {row.get('sample')}"
+        )
+    return "\n".join(lines)
+
+
 # ──────────────────────────────────────────────────────────────
 # Layer 1: direct live-data answers
 # ──────────────────────────────────────────────────────────────
@@ -84,8 +287,26 @@ def _direct_answer(question: str) -> str | None:
     temps = sys.get("temps") or {}
     pressure = sys.get("pressure") or {}
 
+    # ── Named process / service query (must run before generic CPU/mem blocks) ──
+    # If a running process name appears verbatim in the question, answer for that process only.
+    procs_snap = (hub.latest("processes") or {}).get("data", {}).get("procs") or []
+    if procs_snap and not _kw(q, *kw_cfg.process_scope_keywords()):
+        matched = [p for p in procs_snap if p.get("name") and p["name"].lower() in q]
+        is_reasoning = any(w in q for w in kw_cfg.reasoning_keywords())
+        if matched and _kw(q, *kw_cfg.process_metric_keywords()) and not is_reasoning:
+            lines = [
+                f"{p['name']} (pid {p['pid']}): cpu {p.get('cpu', 0):.1f}%  mem {_fmtb(p.get('rss', 0))}"
+                for p in matched[:5]
+            ]
+            return "\n".join(lines)
+
+    # ── Logs / log availability ──
+    if _kw_metric(q, "logs"):
+        if _kw_metric(q, "log_availability"):
+            return _log_status()
+
     # ── CPU ──
-    if _kw(q, "cpu", "processor", "core", "utilization") and not _kw(q, "gpu"):
+    if _kw_metric(q, "cpu"):
         parts = []
         total = cpu.get("total")
         if total is not None:
@@ -108,8 +329,20 @@ def _direct_answer(question: str) -> str | None:
             parts.append(f"ctx-switches {ctx_rate:.0f}/s")
         return "\n".join(parts) if parts else None
 
+    # ── Applications consuming memory (RSS-sorted process list) ──
+    if _kw_metric(q, "memory") and _kw_metric(q, "memory_consumers"):
+        procs = procs_snap
+        if not procs:
+            return "No process data available."
+        top = sorted(procs, key=lambda p: p.get("rss", 0), reverse=True)[:8]
+        lines = [
+            f"{p['name']} (pid {p['pid']}): mem {_fmtb(p.get('rss', 0))}  cpu {p.get('cpu', 0):.1f}%"
+            for p in top
+        ]
+        return "Top processes by memory (RSS):\n" + "\n".join(lines)
+
     # ── Memory / RAM ──
-    if _kw(q, "memory", "mem", "ram") and not _kw(q, "gpu", "vram"):
+    if _kw_metric(q, "memory"):
         parts = []
         used = mem.get("used")
         total = mem.get("total")
@@ -134,7 +367,7 @@ def _direct_answer(question: str) -> str | None:
         return "\n".join(parts) if parts else None
 
     # ── Swap ──
-    if _kw(q, "swap"):
+    if _kw_metric(q, "swap"):
         parts = []
         swap_used = mem.get("swap_used")
         swap_total = mem.get("swap_total")
@@ -148,7 +381,7 @@ def _direct_answer(question: str) -> str | None:
         return "\n".join(parts) if parts else "No swap data available."
 
     # ── Disk ──
-    if _kw(q, "disk", "storage", "space", "filesystem", "mount"):
+    if _kw_metric(q, "disk"):
         if not disks:
             return "No disk data available."
         lines = []
@@ -160,7 +393,7 @@ def _direct_answer(question: str) -> str | None:
         return "\n".join(lines)
 
     # ── Temperature ──
-    if _kw(q, "temp", "thermal", "hot", "heat", "celsius", "degrees"):
+    if _kw_metric(q, "temperature"):
         parts = []
         if jetson:
             soc = jetson.get("soc_temp")
@@ -179,7 +412,7 @@ def _direct_answer(question: str) -> str | None:
         return "\n".join(parts)
 
     # ── GPU ──
-    if _kw(q, "gpu", "graphics", "cuda", "vram", "gpu ram"):
+    if _kw_metric(q, "gpu"):
         if not jetson:
             return "No GPU data (Jetson not detected or jtop not running)."
         parts = []
@@ -195,7 +428,7 @@ def _direct_answer(question: str) -> str | None:
         return "\n".join(parts) if parts else "GPU data not available."
 
     # ── Power ──
-    if _kw(q, "power", "watt", "energy", "consumption"):
+    if _kw_metric(q, "power"):
         if not jetson:
             return "No power data (Jetson not detected)."
         parts = []
@@ -207,7 +440,7 @@ def _direct_answer(question: str) -> str | None:
         return "\n".join(parts) if parts else "Power data not available."
 
     # ── Fan ──
-    if _kw(q, "fan", "cooling", "rpm"):
+    if _kw_metric(q, "fan"):
         if not jetson:
             return "No fan data (Jetson not detected)."
         fan = jetson.get("fan_pct")
@@ -216,7 +449,7 @@ def _direct_answer(question: str) -> str | None:
         return "Fan data not available."
 
     # ── Network ──
-    if _kw(q, "network", "net", "bandwidth", "rx", "tx", "throughput"):
+    if _kw_metric(q, "network"):
         parts = []
         rx = net.get("rx_bps")
         tx = net.get("tx_bps")
@@ -227,12 +460,12 @@ def _direct_answer(question: str) -> str | None:
         return "\n".join(parts) if parts else "No network data."
 
     # ── Uptime ──
-    if _kw(q, "uptime", "up time", "running for", "how long"):
+    if _kw_metric(q, "uptime"):
         uptime = sys.get("uptime_s")
         return f"Uptime: {_fmts(uptime)}" if uptime else "Uptime data not available."
 
     # ── Health / Score ──
-    if _kw(q, "health", "score", "overall status", "system status", "how is the system"):
+    if _kw_metric(q, "health"):
         score = health_data.get("score")
         drivers = health_data.get("drivers") or []
         if score is None:
@@ -247,7 +480,7 @@ def _direct_answer(question: str) -> str | None:
         return "\n".join(parts)
 
     # ── Pressure / PSI ──
-    if _kw(q, "pressure", "psi", "stall"):
+    if _kw_metric(q, "pressure"):
         if not pressure:
             return "No PSI data (Linux 4.20+ required, /proc/pressure may be absent)."
         lines = []
@@ -258,7 +491,7 @@ def _direct_answer(question: str) -> str | None:
         return "\n".join(lines) if lines else "No PSI data."
 
     # ── Anomalies ──
-    if _kw(q, "anomaly", "anomalies", "spike", "unusual", "abnormal"):
+    if _kw_metric(q, "anomaly"):
         from app.analytics.anomaly import detector as adet
         cur = adet.current()
         if not cur:
@@ -267,7 +500,7 @@ def _direct_answer(question: str) -> str | None:
         return f"{len(cur)} active anomaly/anomalies:\n" + "\n".join(lines)
 
     # ── Leaks ──
-    if _kw(q, "leak", "memory leak", "rss climbing", "rss growing"):
+    if _kw_metric(q, "leak"):
         from app.analytics.leak import detector as ldet
         leaks = [l for l in ldet.current() if l.get("flagged")]
         if not leaks:
@@ -280,7 +513,7 @@ def _direct_answer(question: str) -> str | None:
         return f"{len(leaks)} leak(s) detected:\n" + "\n".join(lines)
 
     # ── Crashes ──
-    if _kw(q, "crash", "crashes", "killed", "oom kill", "segfault"):
+    if _kw_metric(q, "crash"):
         crashes = (hub.latest("crashes") or {}).get("data") or {}
         counts = crashes.get("counts") or {}
         if not counts:
@@ -289,20 +522,22 @@ def _direct_answer(question: str) -> str | None:
         return "Crashes (24h):\n" + "\n".join(lines)
 
     # ── Processes ──
-    if _kw(q, "process", "top process", "pid", "what is running", "who is using"):
-        procs = (hub.latest("processes") or {}).get("data", {}).get("procs") or []
+    if _kw_metric(q, "process"):
+        procs = procs_snap
         if not procs:
             return "No process data available."
-        top = sorted(procs, key=lambda p: p.get("cpu", 0), reverse=True)[:8]
+        by_mem = _kw_metric(q, "memory_consumers")
+        sort_key = (lambda p: p.get("rss", 0)) if by_mem else (lambda p: p.get("cpu", 0))
+        label = "memory (RSS)" if by_mem else "CPU"
+        top = sorted(procs, key=sort_key, reverse=True)[:8]
         lines = [
-            f"{p['name']} (pid {p['pid']}): cpu {p.get('cpu',0):.1f}% "
-            f"mem {_fmtb(p.get('rss',0))}"
+            f"{p['name']} (pid {p['pid']}): cpu {p.get('cpu',0):.1f}%  mem {_fmtb(p.get('rss',0))}"
             for p in top
         ]
-        return "Top processes by CPU:\n" + "\n".join(lines)
+        return f"Top processes by {label}:\n" + "\n".join(lines)
 
     # ── Load average ──
-    if _kw(q, "load average", "load avg", "load 1", "load 5", "load 15"):
+    if _kw_metric(q, "load_average"):
         load = cpu.get("load") or []
         if not load:
             return "Load average not available."
@@ -310,7 +545,7 @@ def _direct_answer(question: str) -> str | None:
         return "Load average: " + "  ".join(f"{l}: {v:.2f}" for l, v in zip(labels, load))
 
     # ── EMC / Jetson engines ──
-    if _kw(q, "emc", "memory controller", "dla", "nvenc", "nvdec", "vic"):
+    if _kw_metric(q, "emc"):
         if not jetson:
             return "No Jetson data."
         parts = []
@@ -344,6 +579,130 @@ def _kb_answer(question: str, digest: str) -> str | None:
         return "\n".join(lines)
     except Exception:
         return None
+
+
+
+async def _kb_search_async(question: str, scope: dict[str, Any] | None = None) -> str:
+    ctx = await collect_context_async(_merge_scope(scope, None) or {"window": "5m"})
+    digest = _digest_text(ctx)
+    matches = await asyncio.to_thread(kb.query, question + "\n" + digest, 3)
+    if not matches:
+        return "No KB matches found."
+    lines = []
+    for m in matches[:3]:
+        lines.append(f"{m['title']} (score {m['score']:.2f})")
+        for idx, step in enumerate((m.get("steps") or [])[:5], start=1):
+            lines.append(f"{idx}. {step}")
+    return "\n".join(lines)
+
+
+def _prefer_direct_answer(question: str, direct: str | None, needs_llm: bool | None = None) -> bool:
+    if not direct:
+        return False
+    if needs_llm is None:
+        needs_llm = _needs_llm(question)
+    if not needs_llm:
+        return True
+    q = question.lower()
+    return "log" in q and _kw_metric(q, "log_availability")
+
+
+def _build_agent_messages(
+    conversation: list[ChatMessage],
+    scope: dict[str, Any] | None,
+    context_digest: str = "",
+) -> list[llm.Message]:
+    compact_scope = _merge_scope(scope, None) or {"window": "5m"}
+    messages: list[llm.Message] = []
+    if context_digest:
+        messages.append({
+            "role": "user",
+            "content": (
+                f"[Live system context — scope: {json.dumps(compact_scope)}]\n"
+                f"{context_digest}\n\n"
+                "Use tools to get more specific data when needed."
+            ),
+        })
+        messages.append({"role": "assistant", "content": _AGENT_CONTEXT_ACK})
+    for m in conversation:
+        messages.append({"role": m.role, "content": m.content})
+    return messages
+
+
+async def _run_agentic_chat(
+    body: ChatRequest,
+    ctx: dict[str, Any],
+    max_iterations: int = 5,
+) -> dict[str, Any] | None:
+    base_scope = _merge_scope(body.scope, None) or {"window": "5m"}
+
+    async def get_live_context(window="5m", services=None, pids=None) -> str:
+        return _digest_text(
+            await collect_context_async(_merge_scope(base_scope, {"window": window, "services": services, "pids": pids}))
+        )
+
+    async def search_kb(query, window="5m", services=None, pids=None) -> str:
+        return await _kb_search_async(
+            str(query),
+            _merge_scope(base_scope, {"window": window, "services": services, "pids": pids}),
+        )
+
+    tools = {
+        "get_direct_answer": lambda question: _direct_answer(str(question)) or "No direct live metric match.",
+        "get_live_context": get_live_context,
+        "search_kb": search_kb,
+        "get_log_status": lambda window="15m", level=None, service=None, regex=None: _log_status(
+            window=str(window),
+            level=str(level) if level is not None else None,
+            service=str(service) if service is not None else None,
+            regex=str(regex) if regex is not None else None,
+        ),
+        "get_log_clusters": lambda window="15m", limit=10: _log_clusters(
+            window=str(window),
+            limit=int(limit),
+        ),
+    }
+
+    digest = _digest_text(ctx)
+    messages = _build_agent_messages(body.messages, base_scope, context_digest=digest)
+
+    for iteration in range(max_iterations):
+        result = await llm.chat(messages, system=_AGENT_SYSTEM_PROMPT, response_format="json")
+        text = result.get("text", "")
+
+        try:
+            parsed = _parse_agent_response(text)
+        except (ValueError, json.JSONDecodeError):
+            messages.append({"role": "assistant", "content": text})
+            messages.append({"role": "user", "content": "Return valid JSON only. No markdown, no extra text."})
+            continue
+
+        answer = parsed.get("answer")
+        if isinstance(answer, str) and answer.strip():
+            return {
+                "answer": answer.strip(),
+                "backend": f"{result.get('backend', 'none')}+agent",
+                "model": result.get("model"),
+            }
+
+        tool_name = parsed.get("tool_name")
+        if not isinstance(tool_name, str) or tool_name not in tools:
+            return None
+
+        tool_args = _normalize_tool_arguments(parsed, tool_name, tools)
+        try:
+            tool_output = tools[tool_name](**tool_args)
+            if inspect.isawaitable(tool_output):
+                tool_output = await tool_output
+        except TypeError:
+            return None
+        except Exception as e:
+            tool_output = f"Tool error: {e}"
+
+        messages.append({"role": "assistant", "content": text})
+        messages.append({"role": "user", "content": f"Tool result for {tool_name}:\n{tool_output}"})
+
+    return None
 
 
 # ──────────────────────────────────────────────────────────────
@@ -389,9 +748,9 @@ async def chat_endpoint(body: ChatRequest) -> dict[str, Any]:
                 "latency_ms": int((time.time() - t0) * 1000),
             }
         # No direct match — try KB then give raw digest
-        ctx = collect_context(body.scope or {"window": "5m"})
+        ctx = await collect_context_async(body.scope or {"window": "5m"})
         digest = _digest_text(ctx)
-        kb_ans = _kb_answer(last_user, digest)
+        kb_ans = await asyncio.to_thread(_kb_answer, last_user, digest)
         if kb_ans:
             return {
                 "answer": kb_ans,
@@ -407,15 +766,31 @@ async def chat_endpoint(body: ChatRequest) -> dict[str, Any]:
             "latency_ms": int((time.time() - t0) * 1000),
         }
 
-    # LLM IS configured: gather all context, then refine with LLM
-    ctx = collect_context(body.scope or {"window": "5m"})
+    needs_llm = _needs_llm(last_user)
+    if _prefer_direct_answer(last_user, direct, needs_llm=needs_llm):
+        return {
+            "answer": direct,
+            "backend": "direct",
+            "latency_ms": int((time.time() - t0) * 1000),
+        }
+
+    # Collect context once — reused by both agentic path and fallback LLM path
+    ctx = await collect_context_async(_merge_scope(body.scope, None) or {"window": "5m"})
     digest = _digest_text(ctx)
-    kb_ans = _kb_answer(last_user, digest)
+
+    if needs_llm or direct is None:
+        try:
+            agentic = await _run_agentic_chat(body, ctx)
+        except Exception:
+            agentic = None
+        if agentic:
+            agentic["latency_ms"] = int((time.time() - t0) * 1000)
+            return agentic
+
+    kb_ans = await asyncio.to_thread(_kb_answer, last_user, digest)
     kb_text = kb_ans or ""
 
-    # Build LLM prompt: live data first, then KB, then conversation
-    # If direct answer exists, inject it as a structured data block so
-    # LLM can reason over it rather than guess the values
+    # If direct answer exists, inject as structured data block so LLM reasons over real values
     data_block = f"[Extracted metric data for this question]\n{direct}" if direct else ""
     context_prefix = f"[Live system context]\n{digest}"
     if data_block:
@@ -433,7 +808,6 @@ async def chat_endpoint(body: ChatRequest) -> dict[str, Any]:
     try:
         result = await llm.chat(llm_messages, system=_SYSTEM_PROMPT)
     except Exception as e:
-        # LLM failed — fall back to direct/KB answer
         fallback = direct or kb_ans or digest
         return {
             "answer": fallback,
@@ -445,11 +819,9 @@ async def chat_endpoint(body: ChatRequest) -> dict[str, Any]:
     answer = result.get("text", "")
     backend = result.get("backend", "none")
 
-    # Tag with refinement info when direct data was used
     if direct and backend not in ("none", "error"):
         backend = f"{backend}+direct"
 
-    # KB auto-refinement stub
     if not kb_text and answer and result.get("backend") not in ("none", "error"):
         try:
             _maybe_save_kb_stub(last_user, answer, digest)
@@ -466,8 +838,7 @@ async def chat_endpoint(body: ChatRequest) -> dict[str, Any]:
 
 def _needs_llm(question: str) -> bool:
     q = question.lower()
-    reasoning_words = ["why", "what should", "how to", "fix", "diagnose", "cause", "reason", "recommend", "help"]
-    return any(w in q for w in reasoning_words)
+    return any(w in q for w in kw_cfg.reasoning_keywords())
 
 
 def _maybe_save_kb_stub(question: str, answer: str, digest: str) -> None:

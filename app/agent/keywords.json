@@ -1,0 +1,86 @@
+{
+  "metrics": {
+    "logs": {
+      "keywords": ["log", "logs", "log analysis", "historical results", "live tail"]
+    },
+    "log_availability": {
+      "keywords": ["available", "availability", "showing", "present", "ingested", "collected", "empty", "status"]
+    },
+    "cpu": {
+      "keywords": ["cpu", "processor", "core", "utilization"],
+      "exclude": ["gpu"]
+    },
+    "memory": {
+      "keywords": ["memory", "mem", "ram"],
+      "exclude": ["gpu", "vram"]
+    },
+    "memory_consumers": {
+      "keywords": [
+        "application", "applications", "app", "apps",
+        "consuming", "eating", "using up",
+        "which process", "what process", "who is using",
+        "most memory", "high memory", "top memory", "by memory",
+        "more memory", "biggest", "largest"
+      ]
+    },
+    "swap": {
+      "keywords": ["swap"]
+    },
+    "disk": {
+      "keywords": ["disk", "storage", "space", "filesystem", "mount"]
+    },
+    "temperature": {
+      "keywords": ["temp", "thermal", "hot", "heat", "celsius", "degrees"]
+    },
+    "gpu": {
+      "keywords": ["gpu", "graphics", "cuda", "vram", "gpu ram"]
+    },
+    "power": {
+      "keywords": ["power", "watt", "energy", "consumption"]
+    },
+    "fan": {
+      "keywords": ["fan", "cooling", "rpm"]
+    },
+    "network": {
+      "keywords": ["network", "net", "bandwidth", "rx", "tx", "throughput"]
+    },
+    "uptime": {
+      "keywords": ["uptime", "up time", "running for", "how long"]
+    },
+    "health": {
+      "keywords": ["health", "score", "overall status", "system status", "how is the system"]
+    },
+    "pressure": {
+      "keywords": ["pressure", "psi", "stall"]
+    },
+    "anomaly": {
+      "keywords": ["anomaly", "anomalies", "spike", "unusual", "abnormal"]
+    },
+    "leak": {
+      "keywords": ["leak", "memory leak", "rss climbing", "rss growing"]
+    },
+    "crash": {
+      "keywords": ["crash", "crashes", "killed", "oom kill", "segfault"]
+    },
+    "process": {
+      "keywords": ["process", "top process", "pid", "what is running", "who is using"]
+    },
+    "load_average": {
+      "keywords": ["load average", "load avg", "load 1", "load 5", "load 15"]
+    },
+    "emc": {
+      "keywords": ["emc", "memory controller", "dla", "nvenc", "nvdec", "vic"]
+    }
+  },
+  "process_query": {
+    "metric_keywords": ["cpu", "memory", "mem", "ram", "usage", "process", "pid", "utilization"],
+    "system_scope": ["overall", "total system", "all processes", "top process"]
+  },
+  "reasoning": [
+    "why", "what should", "how to", "how can", "how do", "how would",
+    "fix", "diagnose", "cause", "reason", "recommend", "help",
+    "optimize", "optimise", "improve", "reduce", "lower", "decrease",
+    "tune", "configure", "should i", "best way", "best practice",
+    "what can i", "what could", "is it safe", "explain", "analyze", "analyse"
+  ]
+}

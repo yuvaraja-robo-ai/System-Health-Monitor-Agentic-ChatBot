@@ -1,3 +1,4 @@
+import asyncio
 import shutil
 import subprocess
 import threading
@@ -6,6 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
+from app import runtime
 from app.analytics.leak import detector
 from app.config import settings
 from app.db import duckdb as ldb
@@ -68,8 +70,7 @@ def _list_units() -> list[dict[str, Any]]:
 
 
 def _candidate_names(window_s: int, unit_rows: list[dict[str, Any]]) -> list[str]:
-    names: list[str] = list(settings.monitored_apps)
-    names.extend(sdb.app_names(int(time.time()) - min(window_s, 86400)))
+    names: list[str] = list(dict.fromkeys([*runtime.load_pinned_apps(), *settings.monitored_apps]))
     for leak in detector.current():
         if leak.get("name"):
             names.append(str(leak["name"]))
@@ -80,15 +81,6 @@ def _candidate_names(window_s: int, unit_rows: list[dict[str, Any]]) -> list[str
     for unit in unit_rows:
         if unit.get("name"):
             names.append(str(unit["name"]))
-    for row in ldb.service_log_summary(int(time.time()) - window_s, limit=40):
-        svc = str(row.get("service") or "")
-        if svc:
-            names.append(svc)
-    for event in sdb.recent_events("crash.", int(time.time()) - window_s, limit=100):
-        payload = event.get("payload") or {}
-        unit = payload.get("unit")
-        if unit:
-            names.append(str(unit))
     seen: set[str] = set()
     out: list[str] = []
     for name in names:
@@ -109,14 +101,6 @@ def _pick_best(name: str, rows: list[dict[str, Any]], field: str) -> dict[str, A
             best = row
             best_score = score
     return best if best_score >= 20 else None
-
-
-def _pick_all(name: str, rows: list[dict[str, Any]], field: str, min_score: int = 20) -> list[dict[str, Any]]:
-    out = []
-    for row in rows:
-        if match_score(name, str(row.get(field) or "")) >= min_score:
-            out.append(row)
-    return out
 
 
 def _service_logs(window_s: int) -> list[dict[str, Any]]:
@@ -188,27 +172,36 @@ def _state(proc: dict[str, Any] | None, leak: dict[str, Any] | None, log_rows: l
     return "ok"
 
 
-def _summary(name: str, window_s: int, all_logs: list[dict[str, Any]], unit_rows: list[dict[str, Any]]) -> dict[str, Any]:
+def _summary(
+    name: str,
+    window_s: int,
+    all_logs: list[dict[str, Any]],
+    unit_rows: list[dict[str, Any]],
+    crash_events: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     proc_rows = (hub.latest("processes") or {}).get("data", {}).get("procs", [])[:200]
     proc = _pick_best(name, proc_rows, "name")
     leak = _pick_best(name, detector.current(), "name")
     unit = _pick_best(name, unit_rows, "name")
-    crash_rows = _pick_all(name, sdb.recent_events("crash.", int(time.time()) - window_s, limit=200), "payload")
+    if crash_events is None:
+        crash_events = sdb.recent_events("crash.", int(time.time()) - window_s, limit=200)
+    crash_rows = _pick_all(name, crash_events, "payload")
     log_rows = [
         row for row in all_logs
         if match_score(name, str(row.get("service") or "")) >= 20
     ][:50]
-    runtime = _unit_runtime(unit["name"]) if unit else {}
-    if runtime.get("ExecMainPID") and not proc:
-        proc = next((p for p in proc_rows if int(p.get("pid") or 0) == runtime["ExecMainPID"]), None)
+    # Avoid running systemctl show once per candidate app. That made /api/apps slow
+    # when many units were present. Process-backed apps still get pid/rss/cpu from
+    # the live process snapshot; unit state comes from list-units.
+    runtime: dict[str, Any] = {}
 
     errors = sum(1 for row in log_rows if str(row.get("level") or "").upper() in {"ERR", "ERROR", "CRIT", "FATAL"})
     warns = sum(1 for row in log_rows if str(row.get("level") or "").upper() == "WARN")
 
     row = {
         "name": normalize(name) or name,
-        "label": proc.get("name") if proc else (runtime.get("Id") or unit.get("name") if unit else name),
-        "pid": proc.get("pid") if proc else (runtime.get("ExecMainPID") or None),
+        "label": proc.get("name") if proc else (unit.get("name") if unit else name),
+        "pid": proc.get("pid") if proc else None,
         "cpu": proc.get("cpu") if proc else None,
         "rss": proc.get("rss") if proc else None,
         "threads": proc.get("threads") if proc else None,
@@ -221,11 +214,11 @@ def _summary(name: str, window_s: int, all_logs: list[dict[str, Any]], unit_rows
         "errors": errors,
         "warns": warns,
         "crashes": len(crash_rows),
-        "restarts": runtime.get("NRestarts", 0),
-        "service": unit["name"] if unit else runtime.get("Id"),
-        "description": runtime.get("Description") or (unit.get("description") if unit else ""),
-        "active_state": runtime.get("ActiveState") or (unit.get("active_state") if unit else None),
-        "sub_state": runtime.get("SubState") or (unit.get("sub_state") if unit else None),
+        "restarts": 0,
+        "service": unit["name"] if unit else None,
+        "description": unit.get("description") if unit else "",
+        "active_state": unit.get("active_state") if unit else None,
+        "sub_state": unit.get("sub_state") if unit else None,
         "last_log": log_rows[0] if log_rows else None,
         "recent_logs": log_rows[:8],
         "recent_crashes": crash_rows[:8],
@@ -255,6 +248,40 @@ _rows_lock = threading.Lock()
 _ROWS_TTL_S = 20.0
 
 
+def _build_app_rows(
+    window: str,
+    unit_rows: list[dict[str, Any]],
+    logs: list[dict[str, Any]],
+    crash_events: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    window_s = _parse_window(window)
+    names = _candidate_names(window_s, unit_rows)
+    for row in logs[:200]:
+        service = str(row.get("service") or "")
+        if service:
+            names.append(service)
+    for event in crash_events[:100]:
+        payload = event.get("payload") or {}
+        unit = payload.get("unit")
+        if unit:
+            names.append(str(unit))
+    seen_names: set[str] = set()
+    names = [
+        name for name in names
+        if (normalize(name) or name) not in seen_names
+        and not seen_names.add(normalize(name) or name)
+    ]
+    rows = [_summary(name, window_s, logs, unit_rows, crash_events) for name in names]
+    rows.sort(
+        key=lambda row: (
+            0 if row["status"] == "leak" else 1 if row["status"] == "err" else 2 if row["status"] == "warn" else 3,
+            -(row.get("rss") or 0),
+            -(row.get("errors") or 0),
+        )
+    )
+    return rows
+
+
 def app_rows(window: str = "6h") -> list[dict[str, Any]]:
     now = time.time()
     with _rows_lock:
@@ -265,14 +292,28 @@ def app_rows(window: str = "6h") -> list[dict[str, Any]]:
     window_s = _parse_window(window)
     unit_rows = _list_units()
     logs = _service_logs(window_s)
-    rows = [_summary(name, window_s, logs, unit_rows) for name in _candidate_names(window_s, unit_rows)]
-    rows.sort(
-        key=lambda row: (
-            0 if row["status"] == "leak" else 1 if row["status"] == "err" else 2 if row["status"] == "warn" else 3,
-            -(row.get("rss") or 0),
-            -(row.get("errors") or 0),
-        )
-    )
+    crash_events = sdb.recent_events("crash.", int(time.time()) - window_s, limit=200)
+    rows = _build_app_rows(window, unit_rows, logs, crash_events)
+    with _rows_lock:
+        _rows_cache[window] = (time.time(), rows)
+    return rows
+
+
+async def _to_thread_timeout(func, *args, default, timeout_s: float = 3.0):
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(func, *args), timeout=timeout_s)
+    except Exception:
+        return default
+
+
+async def app_rows_async(window: str = "6h") -> list[dict[str, Any]]:
+    now = time.time()
+    with _rows_lock:
+        cached = _rows_cache.get(window)
+        if cached and now - cached[0] < _ROWS_TTL_S:
+            return cached[1]
+
+    rows = await asyncio.to_thread(_build_app_rows, window, [], [], [])
     with _rows_lock:
         _rows_cache[window] = (time.time(), rows)
     return rows
@@ -296,8 +337,35 @@ def _app_flow(app: str, window: str = "6h", step: str = "1m") -> dict[str, Any]:
     return out
 
 
+async def _app_flow_async(app: str, window: str = "6h", step: str = "1m") -> dict[str, Any]:
+    from app.api.system import _parse_step
+
+    window_s = _parse_window(window)
+    step_s = max(1, _parse_step(step))
+    now = int(time.time())
+    history_rows = await asyncio.gather(
+        *[
+            asyncio.to_thread(sdb.app_history, app, key, now - window_s, now, step_s)
+            for key in _APP_FLOW_KEYS
+        ]
+    )
+    return {
+        "window": window,
+        "step": step,
+        "step_s": step_s,
+        "keys": {
+            key: {"t": [int(ts) for ts, _ in rows], "v": [float(value) for _, value in rows]}
+            for key, rows in zip(_APP_FLOW_KEYS, history_rows)
+        },
+    }
+
+
 def _njmon_app_flow(row: dict[str, Any], window: str = "6h", step: str = "1m") -> dict[str, Any]:
     flow = _app_flow(str(row["name"]), window=window, step=step)
+    return _njmon_from_flow(row, flow, window)
+
+
+def _njmon_from_flow(row: dict[str, Any], flow: dict[str, Any], window: str) -> dict[str, Any]:
     keys = flow["keys"]
     return {
         "identity": {
@@ -345,14 +413,19 @@ def _njmon_app_flow(row: dict[str, Any], window: str = "6h", step: str = "1m") -
     }
 
 
+async def _njmon_app_flow_async(row: dict[str, Any], window: str = "6h", step: str = "1m") -> dict[str, Any]:
+    flow = await _app_flow_async(str(row["name"]), window=window, step=step)
+    return _njmon_from_flow(row, flow, window)
+
+
 @router.get("")
-def list_apps(window: str = Query("6h")) -> list[dict[str, Any]]:
-    return app_rows(window)
+async def list_apps(window: str = Query("6h")) -> list[dict[str, Any]]:
+    return await app_rows_async(window)
 
 
 @router.get("/{name}")
-def app_detail(name: str, window: str = Query("6h"), step: str = Query("1m")) -> dict[str, Any]:
-    rows = app_rows(window)
+async def app_detail(name: str, window: str = Query("6h"), step: str = Query("1m")) -> dict[str, Any]:
+    rows = await app_rows_async(window)
     row = _pick_best(name, rows, "name") or _pick_best(name, rows, "label")
     if not row:
         raise HTTPException(404, f"unknown app: {name}")
@@ -360,44 +433,47 @@ def app_detail(name: str, window: str = Query("6h"), step: str = Query("1m")) ->
     history = {"t": [], "v": []}
     if pid:
         since = int(time.time()) - _parse_window(window)
-        rss_rows = sdb.proc_rss_history(int(pid), since)
+        rss_rows = await asyncio.to_thread(sdb.proc_rss_history, int(pid), since)
         history = {"t": [r[0] for r in rss_rows], "v": [r[1] for r in rss_rows]}
+    flow = await _app_flow_async(str(row["name"]), window=window, step=step)
     return {
         "app": row,
         "rss_history": history,
-        "flow": _app_flow(str(row["name"]), window=window, step=step),
-        "njmon": _njmon_app_flow(row, window=window, step=step),
+        "flow": flow,
+        "njmon": _njmon_from_flow(row, flow, window),
         "polling_s": settings.app_monitor_tick_s,
     }
 
 
 @router.get("/{name}/history")
-def app_history(name: str, window: str = Query("6h"), step: str = Query("1m")) -> dict[str, Any]:
-    rows = app_rows(window)
+async def app_history(name: str, window: str = Query("6h"), step: str = Query("1m")) -> dict[str, Any]:
+    rows = await app_rows_async(window)
     row = _pick_best(name, rows, "name") or _pick_best(name, rows, "label")
     if not row:
         raise HTTPException(404, f"unknown app: {name}")
+    flow = await _app_flow_async(str(row["name"]), window=window, step=step)
+    njmon = await _njmon_app_flow_async(row, window=window, step=step)
     return {
         "app": row["name"],
         "label": row["label"],
         "polling_s": settings.app_monitor_tick_s,
-        "flow": _app_flow(str(row["name"]), window=window, step=step),
-        "njmon": _njmon_app_flow(row, window=window, step=step),
+        "flow": flow,
+        "njmon": njmon,
     }
 
 
 @router.get("/{name}/njmon")
-def app_njmon(
+async def app_njmon(
     name: str,
     window: str = Query("6h"),
     step: str = Query("1m"),
     format: str = Query("nested"),
 ) -> dict[str, Any]:
-    rows = app_rows(window)
+    rows = await app_rows_async(window)
     row = _pick_best(name, rows, "name") or _pick_best(name, rows, "label")
     if not row:
         raise HTTPException(404, f"unknown app: {name}")
-    nested = _njmon_app_flow(row, window=window, step=step)
+    nested = await _njmon_app_flow_async(row, window=window, step=step)
     if format == "flat":
         return _flatten_njmon(nested)
     return nested

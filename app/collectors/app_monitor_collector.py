@@ -1,4 +1,6 @@
 import asyncio
+import shutil
+import subprocess
 import time
 from typing import Any
 
@@ -39,6 +41,7 @@ class AppMonitorCollector(Collector):
         super().__init__()
         self._last_ts = int(time.time()) - max(1, int(settings.app_monitor_tick_s))
         self._prev_io: dict[int, tuple[int, int]] = {}
+        self._unit_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
     async def tick(self) -> None:
         ts = int(time.time())
@@ -52,6 +55,8 @@ class AppMonitorCollector(Collector):
         logs = ldb.query_logs(since_s=start, limit=max(500, settings.log_batch_size * 4))
         crashes = sdb.recent_events("crash.", start, limit=500)
         proc_stats = self._process_stats(ts)
+        proc_by_pid = {int(p.get("pid") or 0): p for p in procs if p.get("pid") is not None}
+        proc_stats_by_pid = {int(p.get("pid") or 0): p for p in proc_stats if p.get("pid") is not None}
 
         names: list[str] = list(settings.monitored_apps)
         names.extend(sdb.app_names(start))
@@ -80,6 +85,19 @@ class AppMonitorCollector(Collector):
         for app in apps:
             matched = [p for p in procs if match_score(app, str(p.get("name") or "")) >= 20]
             matched_stats = [p for p in proc_stats if match_score(app, str(p.get("name") or "")) >= 20]
+
+            # Pinned custom apps are often systemd services whose unit name does not match
+            # the process executable. Fall back to the service main PID so NJMON views show data.
+            unit_pid = self._unit_pid(app)
+            if unit_pid and not any(int(p.get("pid") or 0) == unit_pid for p in matched):
+                proc = proc_by_pid.get(unit_pid)
+                if proc is not None:
+                    matched.append(proc)
+            if unit_pid and not any(int(p.get("pid") or 0) == unit_pid for p in matched_stats):
+                proc_stat = proc_stats_by_pid.get(unit_pid)
+                if proc_stat is not None:
+                    matched_stats.append(proc_stat)
+
             cpu = sum(float(p.get("cpu") or 0.0) for p in matched)
             rss = sum(float(p.get("rss") or 0.0) for p in matched)
             threads = sum(float(p.get("threads") or 0.0) for p in matched)
@@ -116,6 +134,63 @@ class AppMonitorCollector(Collector):
                 ]
             )
         return out
+
+    def _unit_runtime(self, app: str) -> dict[str, Any]:
+        now = time.time()
+        cached = self._unit_cache.get(app)
+        if cached and now - cached[0] < 15.0:
+            return cached[1]
+
+        systemctl = shutil.which("systemctl")
+        if not systemctl:
+            return {}
+
+        candidates = [app]
+        if not app.endswith(".service"):
+            candidates.append(f"{app}.service")
+
+        for unit in candidates:
+            try:
+                res = subprocess.run(
+                    [
+                        systemctl,
+                        "show",
+                        unit,
+                        "--property=Id,Names,ExecMainPID,ActiveState,SubState,Description,MainPID",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    timeout=2,
+                )
+            except (OSError, subprocess.SubprocessError):
+                continue
+
+            out: dict[str, Any] = {"requested": unit}
+            for line in res.stdout.splitlines():
+                if "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                out[k] = v
+            for key in ("ExecMainPID", "MainPID"):
+                try:
+                    out[key] = int(out.get(key) or 0)
+                except (TypeError, ValueError):
+                    out[key] = 0
+            if out.get("Id") or out.get("Names") or out.get("ExecMainPID") or out.get("MainPID"):
+                self._unit_cache[app] = (now, out)
+                return out
+
+        self._unit_cache[app] = (now, {})
+        return {}
+
+    def _unit_pid(self, app: str) -> int | None:
+        runtime = self._unit_runtime(app)
+        for key in ("ExecMainPID", "MainPID"):
+            pid = int(runtime.get(key) or 0)
+            if pid > 0:
+                return pid
+        return None
 
     def _process_stats(self, ts: int) -> list[dict[str, Any]]:
         dt = max(1.0, float(ts - self._last_ts))

@@ -14,7 +14,7 @@ Use this as the primary engineering reference for:
 - edge-device data collection
 - known gaps and next steps
 
-For design intent and wireframe usage, see [DESIGN_USAGE.md](/home/ds/Documents/Development/SchoolofAI/SystemHealth/DESIGN_USAGE.md:1).
+For design intent and wireframe usage, see [DESIGN_USAGE.md](/tmp/System-Health-Monitor-Agentic-ChatBot/design/docs/DESIGN_USAGE.md:1).
 
 ## Runtime Architecture
 
@@ -22,7 +22,7 @@ For design intent and wireframe usage, see [DESIGN_USAGE.md](/home/ds/Documents/
 
 The runtime backend is a FastAPI application served from:
 
-- [app/main.py](/home/ds/Documents/Development/SchoolofAI/SystemHealth/app/main.py:1)
+- [app/main.py](/tmp/System-Health-Monitor-Agentic-ChatBot/app/main.py:1)
 
 It starts collectors, analytics tasks, API routers, websocket streams, and static-file serving for the runtime dashboard.
 
@@ -30,9 +30,9 @@ It starts collectors, analytics tasks, API routers, websocket streams, and stati
 
 The runtime dashboard is served from:
 
-- [dashboard.html](/home/ds/Documents/Development/SchoolofAI/SystemHealth/dashboard.html:1)
-- [dashboard.jsx](/home/ds/Documents/Development/SchoolofAI/SystemHealth/dashboard.jsx:1)
-- [dashboard.css](/home/ds/Documents/Development/SchoolofAI/SystemHealth/dashboard.css:1)
+- [dashboard.html](/tmp/System-Health-Monitor-Agentic-ChatBot/dashboard.html:1)
+- [dashboard.jsx](/tmp/System-Health-Monitor-Agentic-ChatBot/dashboard.jsx:1)
+- [dashboard.css](/tmp/System-Health-Monitor-Agentic-ChatBot/dashboard.css:1)
 
 The runtime dashboard is a live operational UI backed by FastAPI APIs and websocket streams.
 
@@ -40,12 +40,12 @@ The runtime dashboard is a live operational UI backed by FastAPI APIs and websoc
 
 The design wireframes remain separate from the runtime dashboard and are served from:
 
-- [SystemHealth Wireframes.html](/home/ds/Documents/Development/SchoolofAI/SystemHealth/SystemHealth%20Wireframes.html:1)
-- [wf1-cockpit.jsx](/home/ds/Documents/Development/SchoolofAI/SystemHealth/wf1-cockpit.jsx:1)
-- [wf2-sidebar.jsx](/home/ds/Documents/Development/SchoolofAI/SystemHealth/wf2-sidebar.jsx:1)
-- [wf3-terminal.jsx](/home/ds/Documents/Development/SchoolofAI/SystemHealth/wf3-terminal.jsx:1)
-- [wf4-editorial.jsx](/home/ds/Documents/Development/SchoolofAI/SystemHealth/wf4-editorial.jsx:1)
-- [wf5-leakhunter.jsx](/home/ds/Documents/Development/SchoolofAI/SystemHealth/wf5-leakhunter.jsx:1)
+- [SystemHealth Wireframes.html](/tmp/System-Health-Monitor-Agentic-ChatBot/design/wireframes/SystemHealth%20Wireframes.html:1)
+- [wf1-cockpit.jsx](/tmp/System-Health-Monitor-Agentic-ChatBot/design/wireframes/wf1-cockpit.jsx:1)
+- [wf2-sidebar.jsx](/tmp/System-Health-Monitor-Agentic-ChatBot/design/wireframes/wf2-sidebar.jsx:1)
+- [wf3-terminal.jsx](/tmp/System-Health-Monitor-Agentic-ChatBot/design/wireframes/wf3-terminal.jsx:1)
+- [wf4-editorial.jsx](/tmp/System-Health-Monitor-Agentic-ChatBot/design/wireframes/wf4-editorial.jsx:1)
+- [wf5-leakhunter.jsx](/tmp/System-Health-Monitor-Agentic-ChatBot/design/wireframes/wf5-leakhunter.jsx:1)
 
 The runtime app now mirrors more of these layouts, but it is still not a 1:1 reproduction.
 
@@ -53,7 +53,7 @@ The runtime app now mirrors more of these layouts, but it is still not a 1:1 rep
 
 ### Collectors currently implemented
 
-- [app/collectors/psutil_collector.py](/home/ds/Documents/Development/SchoolofAI/SystemHealth/app/collectors/psutil_collector.py:1)
+- [app/collectors/psutil_collector.py](/tmp/System-Health-Monitor-Agentic-ChatBot/app/collectors/psutil_collector.py:1)
   - CPU
   - memory
   - disk
@@ -61,32 +61,32 @@ The runtime app now mirrors more of these layouts, but it is still not a 1:1 rep
   - temperatures
   - process snapshots
 
-- [app/collectors/jtop_collector.py](/home/ds/Documents/Development/SchoolofAI/SystemHealth/app/collectors/jtop_collector.py:1)
+- [app/collectors/jtop_collector.py](/tmp/System-Health-Monitor-Agentic-ChatBot/app/collectors/jtop_collector.py:1)
   - Jetson GPU load
   - GPU memory
   - SoC temperature
   - power draw
   - fan
 
-- [app/collectors/journald_collector.py](/home/ds/Documents/Development/SchoolofAI/SystemHealth/app/collectors/journald_collector.py:1)
+- [app/collectors/journald_collector.py](/tmp/System-Health-Monitor-Agentic-ChatBot/app/collectors/journald_collector.py:1)
   - system/service logs
   - journald-derived log streaming
 
-- [app/collectors/crash_collector.py](/home/ds/Documents/Development/SchoolofAI/SystemHealth/app/collectors/crash_collector.py:1)
+- [app/collectors/crash_collector.py](/tmp/System-Health-Monitor-Agentic-ChatBot/app/collectors/crash_collector.py:1)
   - crash-like signal detection from journald
   - exit code pattern detection
 
-- [app/collectors/filelog_collector.py](/home/ds/Documents/Development/SchoolofAI/SystemHealth/app/collectors/filelog_collector.py:1)
+- [app/collectors/filelog_collector.py](/tmp/System-Health-Monitor-Agentic-ChatBot/app/collectors/filelog_collector.py:1)
   - structured or plain-text app logs from configured files/directories
 
 ### Analytics currently implemented
 
-- [app/analytics/leak.py](/home/ds/Documents/Development/SchoolofAI/SystemHealth/app/analytics/leak.py:1)
+- [app/analytics/leak.py](/tmp/System-Health-Monitor-Agentic-ChatBot/app/analytics/leak.py:1)
   - RSS leak slope
   - rolling regression
   - TTL to OOM
 
-- [app/analytics/health.py](/home/ds/Documents/Development/SchoolofAI/SystemHealth/app/analytics/health.py:1)
+- [app/analytics/health.py](/tmp/System-Health-Monitor-Agentic-ChatBot/app/analytics/health.py:1)
   - overall health score
   - drivers based on CPU, memory, disk, temperature, leaks, crashes
 
@@ -94,7 +94,7 @@ The runtime app now mirrors more of these layouts, but it is still not a 1:1 rep
 
 ### SQLite
 
-- [app/db/sqlite.py](/home/ds/Documents/Development/SchoolofAI/SystemHealth/app/db/sqlite.py:1)
+- [app/db/sqlite.py](/tmp/System-Health-Monitor-Agentic-ChatBot/app/db/sqlite.py:1)
 
 Used for:
 
@@ -112,7 +112,7 @@ Recent hardening:
 
 ### DuckDB
 
-- [app/db/duckdb.py](/home/ds/Documents/Development/SchoolofAI/SystemHealth/app/db/duckdb.py:1)
+- [app/db/duckdb.py](/tmp/System-Health-Monitor-Agentic-ChatBot/app/db/duckdb.py:1)
 
 Used for:
 
@@ -244,7 +244,7 @@ Used for:
 
 ## Configuration
 
-Defined in [app/config.py](/home/ds/Documents/Development/SchoolofAI/SystemHealth/app/config.py:1).
+Defined in [app/config.py](/tmp/System-Health-Monitor-Agentic-ChatBot/app/config.py:1).
 
 Important runtime variables:
 
@@ -293,16 +293,16 @@ Important runtime variables:
 
 ## Files Most Relevant To This Implementation
 
-- [app/main.py](/home/ds/Documents/Development/SchoolofAI/SystemHealth/app/main.py:1)
-- [app/config.py](/home/ds/Documents/Development/SchoolofAI/SystemHealth/app/config.py:1)
-- [app/api/apps.py](/home/ds/Documents/Development/SchoolofAI/SystemHealth/app/api/apps.py:1)
-- [app/api/briefing.py](/home/ds/Documents/Development/SchoolofAI/SystemHealth/app/api/briefing.py:1)
-- [app/api/derived.py](/home/ds/Documents/Development/SchoolofAI/SystemHealth/app/api/derived.py:1)
-- [app/api/processes.py](/home/ds/Documents/Development/SchoolofAI/SystemHealth/app/api/processes.py:1)
-- [app/api/logs.py](/home/ds/Documents/Development/SchoolofAI/SystemHealth/app/api/logs.py:1)
-- [app/collectors/psutil_collector.py](/home/ds/Documents/Development/SchoolofAI/SystemHealth/app/collectors/psutil_collector.py:1)
-- [app/collectors/jtop_collector.py](/home/ds/Documents/Development/SchoolofAI/SystemHealth/app/collectors/jtop_collector.py:1)
-- [app/collectors/journald_collector.py](/home/ds/Documents/Development/SchoolofAI/SystemHealth/app/collectors/journald_collector.py:1)
-- [app/collectors/filelog_collector.py](/home/ds/Documents/Development/SchoolofAI/SystemHealth/app/collectors/filelog_collector.py:1)
-- [dashboard.jsx](/home/ds/Documents/Development/SchoolofAI/SystemHealth/dashboard.jsx:1)
-- [dashboard.css](/home/ds/Documents/Development/SchoolofAI/SystemHealth/dashboard.css:1)
+- [app/main.py](/tmp/System-Health-Monitor-Agentic-ChatBot/app/main.py:1)
+- [app/config.py](/tmp/System-Health-Monitor-Agentic-ChatBot/app/config.py:1)
+- [app/api/apps.py](/tmp/System-Health-Monitor-Agentic-ChatBot/app/api/apps.py:1)
+- [app/api/briefing.py](/tmp/System-Health-Monitor-Agentic-ChatBot/app/api/briefing.py:1)
+- [app/api/derived.py](/tmp/System-Health-Monitor-Agentic-ChatBot/app/api/derived.py:1)
+- [app/api/processes.py](/tmp/System-Health-Monitor-Agentic-ChatBot/app/api/processes.py:1)
+- [app/api/logs.py](/tmp/System-Health-Monitor-Agentic-ChatBot/app/api/logs.py:1)
+- [app/collectors/psutil_collector.py](/tmp/System-Health-Monitor-Agentic-ChatBot/app/collectors/psutil_collector.py:1)
+- [app/collectors/jtop_collector.py](/tmp/System-Health-Monitor-Agentic-ChatBot/app/collectors/jtop_collector.py:1)
+- [app/collectors/journald_collector.py](/tmp/System-Health-Monitor-Agentic-ChatBot/app/collectors/journald_collector.py:1)
+- [app/collectors/filelog_collector.py](/tmp/System-Health-Monitor-Agentic-ChatBot/app/collectors/filelog_collector.py:1)
+- [dashboard.jsx](/tmp/System-Health-Monitor-Agentic-ChatBot/dashboard.jsx:1)
+- [dashboard.css](/tmp/System-Health-Monitor-Agentic-ChatBot/dashboard.css:1)

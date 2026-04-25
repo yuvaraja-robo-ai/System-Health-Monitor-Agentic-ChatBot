@@ -25,8 +25,10 @@ bash dev.sh
 
 Run tests:
 ```bash
-pytest
+bash tools/test_before_push.sh
 ```
+
+This is the required local verification step before opening or updating a PR.
 
 ---
 
@@ -45,11 +47,11 @@ app/
 
 tests/          pytest suite (session-scoped client fixture)
 data/kb/        Runbook markdown files
-tools/          Utility scripts (KB stub generator, etc.)
+tools/          Utility scripts, including pre-push verification
 
 dashboard.jsx   React dashboard (CDN, no build step)
-primitives.jsx  Shared wireframe components
-wf*.jsx         Wireframe screens
+design/wireframes/  Prototype wireframes and design canvas
+design/docs/        Design-specific reference docs
 ```
 
 ---
@@ -62,6 +64,57 @@ wf*.jsx         Wireframe screens
 - No comments unless the WHY is non-obvious
 - No dead code, no backwards-compat shims
 - Tests in `tests/` — use the session-scoped `client` fixture from `conftest.py` to avoid DuckDB lock conflicts
+
+## Required Verification
+
+Before every push, run:
+
+```bash
+bash tools/test_before_push.sh
+```
+
+This currently runs:
+
+1. `python3 -m compileall app tests run_server.py`
+2. `pytest`
+
+Contributors should not push code without completing this local verification.
+
+---
+
+## Extending Keyword Routing
+
+The chat agent matches questions to live-data handlers using keyword groups
+defined in `app/agent/keywords.json`. To add a new topic or synonym:
+
+```json
+// app/agent/keywords.json
+{
+  "metrics": {
+    "my_metric": {
+      "keywords": ["my keyword", "synonym one", "synonym two"],
+      "exclude": ["word that should prevent this match"]
+    }
+  }
+}
+```
+
+Then handle the new group in `_direct_answer` (`app/api/chat.py`):
+
+```python
+if _kw_metric(q, "my_metric"):
+    return "..."
+```
+
+To add reasoning/optimization keywords (questions that should go to the LLM
+instead of returning a direct answer), append to the `reasoning` array:
+
+```json
+"reasoning": ["why", "optimize", "your new keyword here"]
+```
+
+No Python changes needed for adding new keywords or reasoning triggers —
+only `keywords.json` needs editing.
 
 ---
 
@@ -90,13 +143,19 @@ curl -X POST http://localhost:9090/api/kb/reload
 
 KB files in `data/kb/` (excluding `auto_*.md`) can be committed. Auto-generated stubs are gitignored.
 
+KB implementation notes:
+
+- KB build/query code lives in `app/agent/kb.py`
+- Embeddings come from `app/agent/embed.py`
+- Chat fallback and KB usage are exercised in `tests/test_kb_chat_flow.py`
+
 ---
 
 ## Pull Request Process
 
 1. Fork the repo and create a branch: `git checkout -b feature/my-thing`
 2. Make changes; add or update tests
-3. Run `pytest` — all tests must pass
+3. Run `bash tools/test_before_push.sh` — contributors should do this before every push
 4. Open a PR against `main`
 5. Fill in the PR template
 6. One maintainer review required before merge

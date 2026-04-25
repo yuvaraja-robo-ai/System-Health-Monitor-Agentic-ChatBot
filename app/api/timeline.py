@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Query
@@ -64,9 +65,16 @@ def timeline(
     for row in ldb.cluster_logs(since, limit=50):
         if row.get("level") not in ("ERROR", "CRITICAL", "CRIT"):
             continue
-        last_seen = row.get("last_seen") or since
+        last_seen = row.get("last")
+        if isinstance(last_seen, str):
+            try:
+                last_ts = int(datetime.fromisoformat(last_seen).timestamp())
+            except ValueError:
+                last_ts = since
+        else:
+            last_ts = since
         events.append({
-            "ts": int(last_seen),
+            "ts": last_ts,
             "kind": "log_error",
             "severity": "err" if row.get("level") in ("CRITICAL", "CRIT") else "warn",
             "source": row.get("service", "?"),

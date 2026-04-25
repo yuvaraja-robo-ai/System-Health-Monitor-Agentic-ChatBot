@@ -51,6 +51,11 @@ pip install -e ".[kb]"
 pip install -e ".[all]"
 ```
 
+For contributors:
+```bash
+pip install pytest pytest-asyncio httpx
+```
+
 ### 2. Configure (optional)
 
 ```bash
@@ -60,6 +65,16 @@ cp .env.example .env
 
 ### 3. Run
 
+```bash
+./start.sh
+# open http://localhost:9090
+```
+
+`start.sh` auto-detects a local llama.cpp server at `http://127.0.0.1:8080`
+or Ollama at `http://127.0.0.1:11434`. It disables KB indexing by default for
+fast startup; use `SH_ENABLE_KB=1 ./start.sh` if you want KB runbook search.
+
+Manual developer runner:
 ```bash
 bash dev.sh
 # open http://localhost:9090
@@ -88,10 +103,18 @@ Answers come from three layers — no LLM required for the first two:
 ```bash
 # .env
 SH_OLLAMA_URL=http://localhost:11434
+# or, for llama.cpp:
+SH_LLAMA_URL=http://127.0.0.1:8080
 SH_LLM_MODEL=llama3.2:3b
 ```
 
-See [AGENT_CHAT_ARCHITECTURE.md](AGENT_CHAT_ARCHITECTURE.md) for full design details.
+See [AGENT_CHAT_ARCHITECTURE.md](AGENT_CHAT_ARCHITECTURE.md) for full design details and [docs/agent-chat-sequence.puml](/tmp/System-Health-Monitor-Agentic-ChatBot/docs/agent-chat-sequence.puml:1) for the end-to-end sequence diagram.
+
+Chat resolution order:
+
+1. Direct live-data answer from in-memory hub snapshots
+2. KB semantic search over Markdown runbooks in `data/kb/`
+3. Local LLM reasoning through Ollama or llama.cpp
 
 ---
 
@@ -206,18 +229,45 @@ Reload without restart:
 curl -X POST http://localhost:9090/api/kb/reload
 ```
 
+Notes:
+
+- KB search requires `pip install -e ".[kb]"`
+- The embed/index build uses `sentence-transformers` + FAISS locally
+- The KB directory defaults to `data/kb/` and can be overridden with `SH_KB_DIR`
+- Auto-generated KB stubs are written as `auto_*.md` and are gitignored
+
+## Repository Layout
+
+```
+app/                 FastAPI app, collectors, analytics, KB, LLM routing
+tests/               Pytest coverage for API, analytics, chat, KB flow
+tools/               Utility scripts, including pre-push verification
+data/kb/             Markdown runbooks used by the chat KB
+design/wireframes/   Prototype wireframes and design canvas assets
+design/docs/         Design-specific documentation
+dashboard.*          Production dashboard assets
+```
+
 ---
 
 ## Running Tests
 
 ```bash
-pip install pytest pytest-asyncio httpx
-pytest
+bash tools/test_before_push.sh
 ```
+
+This is the required local verification step before pushing changes.
 
 Single module:
 ```bash
 pytest tests/test_chat.py -v
+```
+
+Useful focused runs:
+
+```bash
+pytest tests/test_kb_chat_flow.py -v
+pytest tests/test_analytics.py -v
 ```
 
 ---

@@ -102,10 +102,13 @@ async def lifespan(app: FastAPI):
     sdb.init()
     ldb._conn()
     runtime.init_pinned_apps()
-    try:
-        kb.build()
-    except Exception:
-        log.exception("kb build failed")
+    if os.getenv("SH_ENABLE_KB", "0").lower() in {"1", "true", "yes"}:
+        try:
+            kb.build()
+        except Exception:
+            log.exception("kb build failed")
+    else:
+        log.info("kb build skipped; set SH_ENABLE_KB=1 to enable")
 
     collectors = _build_collectors()
     runtime.register_collectors(collectors)

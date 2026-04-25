@@ -186,6 +186,24 @@ button.btn:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 .section-head { color: var(--fg); margin-top: 6px; font-weight: 600; }
 .cluster-card { border-left: 2px solid var(--rule); padding-left: 10px; }
+.cluster-list { display: grid; gap: 12px; }
+.cluster-top {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.cluster-meta {
+  color: var(--fg-3);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.cluster-sample {
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.log-analysis-grid { align-items: start; }
+.log-summary-grid { align-items: start; }
 .steps { margin: 10px 0 0 18px; padding: 0; line-height: 1.6; color: var(--fg-2); }
 
 .terminal-view { display: grid; gap: 14px; }

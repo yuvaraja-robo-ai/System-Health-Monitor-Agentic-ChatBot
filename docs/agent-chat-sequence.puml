@@ -1,0 +1,133 @@
+@startuml
+title SystemHealth Agent Chat Flow
+
+actor User
+participant "Dashboard UI" as UI
+participant "FastAPI /api/chat\napp/api/chat.py" as ChatAPI
+participant "Hub\nlive snapshots" as Hub
+participant "Context Builder\napp/agent/diagnose.py" as Context
+participant "KB Engine\napp/agent/kb.py" as KB
+participant "Embedding Model\napp/agent/embed.py" as Embed
+database "FAISS Index" as FAISS
+participant "LLM Router\napp/agent/llm.py" as LLM
+participant "Ollama / llama.cpp" as Model
+collections "data/kb/*.md" as KBFiles
+
+== Startup / KB build ==
+ChatAPI -> KB: build()
+KB -> KBFiles: scan *.md
+KBFiles --> KB: markdown docs
+KB -> KB: parse title/tags/steps/full text
+alt FAISS + embedding model available
+  KB -> Embed: embed(doc texts)
+  Embed --> KB: vectors
+  KB -> FAISS: build / refresh index
+  KB -> KBFiles: write meta.json + faiss.index
+else KB deps unavailable
+  KB -> KB: disable semantic KB search
+end
+
+== User message ==
+User -> UI: type chat message
+UI -> ChatAPI: POST /api/chat\nmessages[] + optional scope
+ChatAPI -> ChatAPI: extract latest user message
+
+== Layer 1: direct live answer ==
+ChatAPI -> Hub: latest("system")
+ChatAPI -> Hub: latest("jetson")
+ChatAPI -> Hub: latest("health")
+ChatAPI -> Hub: latest("crashes")
+ChatAPI -> Hub: latest("processes")
+Hub --> ChatAPI: latest snapshots
+ChatAPI -> ChatAPI: _direct_answer(question)
+
+alt direct answer found and no LLM configured
+  ChatAPI --> UI: {answer, backend="direct"}
+  UI --> User: render response
+
+else no direct answer and no LLM configured
+  ChatAPI -> Context: collect_context(scope)
+  Context -> Hub: latest(system/health/processes/crashes)
+  Context --> ChatAPI: context dict
+  ChatAPI -> ChatAPI: _digest_text(context)
+
+  ChatAPI -> KB: query(question + digest)
+  alt KB index exists
+    KB -> Embed: embed(query)
+    Embed --> KB: query vector
+    KB -> FAISS: similarity search
+    FAISS --> KB: top matches
+    KB --> ChatAPI: KB matches
+    ChatAPI -> ChatAPI: _kb_answer(...)
+  else KB disabled / empty
+    KB --> ChatAPI: no matches
+  end
+
+  alt KB answer found
+    ChatAPI --> UI: {answer, backend="kb"}
+  else no KB answer
+    ChatAPI --> UI: {answer="No LLM configured...\nLive system snapshot: ...", backend="none"}
+  end
+  UI --> User: render response
+
+else LLM configured
+  == Build context ==
+  ChatAPI -> Context: collect_context(scope)
+  Context -> Hub: latest(system/health/processes/crashes)
+  Context --> ChatAPI: context dict
+  ChatAPI -> ChatAPI: _digest_text(context)
+
+  == KB lookup ==
+  ChatAPI -> KB: query(question + digest)
+  alt KB index exists
+    KB -> Embed: embed(query)
+    Embed --> KB: query vector
+    KB -> FAISS: similarity search
+    FAISS --> KB: top matches
+    KB --> ChatAPI: KB matches
+    ChatAPI -> ChatAPI: _kb_answer(...)
+  else KB disabled / empty
+    KB --> ChatAPI: no matches
+  end
+
+  == Compose LLM prompt ==
+  ChatAPI -> ChatAPI: build context_prefix\n[direct data] + [live digest] + [KB] + chat history
+  ChatAPI -> LLM: chat(messages, system prompt)
+
+  alt Ollama configured
+    LLM -> Model: POST /api/chat
+    Model --> LLM: generated reply
+    LLM --> ChatAPI: {text, backend="ollama"}
+  else llama.cpp configured
+    LLM -> Model: POST /completion
+    Model --> LLM: generated reply
+    LLM --> ChatAPI: {text, backend="llama.cpp"}
+  else no backend
+    LLM --> ChatAPI: {text="no LLM configured", backend="none"}
+  end
+
+  alt LLM success
+    ChatAPI -> ChatAPI: maybe tag backend with +direct
+    alt no KB answer and LLM produced answer
+      ChatAPI -> ChatAPI: _maybe_save_kb_stub(question, answer, digest)
+      ChatAPI -> KBFiles: write auto_<slug>.md
+    end
+    ChatAPI --> UI: {answer, backend, model, latency_ms}
+  else LLM exception
+    ChatAPI -> ChatAPI: fallback = direct or kb or digest
+    ChatAPI --> UI: {answer=fallback, backend="direct+kb_fallback", note=error}
+  end
+
+  UI --> User: render response
+end
+
+== KB reload ==
+User -> UI: trigger KB reload
+UI -> ChatAPI: POST /api/kb/reload
+ChatAPI -> KB: build(force=True)
+KB -> KBFiles: rescan *.md
+KB -> Embed: re-embed docs
+KB -> FAISS: rebuild index
+ChatAPI --> UI: {ok: true, entries: N}
+
+@enduml
