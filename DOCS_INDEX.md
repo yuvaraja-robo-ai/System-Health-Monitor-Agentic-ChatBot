@@ -77,7 +77,7 @@ export SH_LOG_APP_DIRS="/var/log/myapp/app.log"
 ### 2. Start SystemHealth + Your App
 
 ```bash
-cd /home/ds/Documents/Development/SchoolofAI/SystemHealth
+cd /path/to/System-Health-Monitor-Agentic-ChatBot
 python3 app/main.py &
 python3 /opt/myapp/run.py &
 ```
@@ -168,9 +168,7 @@ Agent (Diagnose tab):
 
 ---
 
-## 🔗 Related Files (Earlier Tasks)
-
-These files were created in Tasks 1-4:
+## 🔗 Related Files
 
 | File | Purpose |
 |------|---------|
@@ -294,7 +292,7 @@ See LOG_ANALYSIS_README.md for detailed API examples.
 
 ---
 
-## ✅ What's Included (All 4 Tasks + Logs)
+## ✅ What's Included
 
 ✓ Jetson GPU metrics (power rails, EMC, engine load)
 ✓ Jetson thermal deep-dive tab

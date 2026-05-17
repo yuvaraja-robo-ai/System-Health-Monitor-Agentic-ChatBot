@@ -246,3 +246,271 @@ def test_chat_prefers_direct_log_availability_answer(monkeypatch):
     out = asyncio.run(chat_endpoint(body))
     assert out["backend"] == "direct"
     assert "Logs available check" in out["answer"]
+
+
+def test_recent_application_errors_uses_log_clusters_not_process_list(monkeypatch):
+    from app.api.chat import _direct_answer
+
+    def fake_latest(topic):
+        if topic == "processes":
+            return {
+                "data": {
+                    "procs": [
+                        {"pid": 167320, "name": "uvicorn", "cpu": 15.0, "rss": 343 * 1024 * 1024},
+                    ]
+                }
+            }
+        return None
+
+    monkeypatch.setattr("app.api.chat.hub.latest", fake_latest)
+    monkeypatch.setattr(
+        "app.api.chat.ldb.cluster_logs",
+        lambda since_s, limit=10: [
+            {
+                "service": "uvicorn",
+                "level": "ERROR",
+                "count": 4,
+                "sample": "database connection failed",
+            }
+        ],
+    )
+
+    answer = _direct_answer("What are the recent errors from the applications")
+    assert answer is not None
+    assert answer.startswith("1 log cluster(s)")
+    assert "uvicorn ERROR x4: database connection failed" in answer
+    assert not answer.startswith("Top processes by CPU:")
+
+
+def test_log_availability_does_not_route_to_sla(monkeypatch):
+    from app.api.chat import _direct_answer
+
+    monkeypatch.setattr("app.api.chat.ldb.query_logs", lambda **kwargs: [])
+    monkeypatch.setattr("app.api.chat.ldb.cluster_logs", lambda since_s, limit=5: [])
+
+    answer = _direct_answer("show log availability status")
+    assert answer is not None
+    assert answer.startswith("Logs available check:")
+    assert not answer.startswith("SLA")
+
+
+def test_system_resource_summary_combines_available_live_data(monkeypatch):
+    from app.api.chat import _direct_answer
+
+    def fake_latest(topic):
+        if topic == "system":
+            return {
+                "data": {
+                    "cpu": {"total": 42.0, "load": [1.25, 1.5, 1.75]},
+                    "mem": {"used": 2 * 1024 * 1024 * 1024, "total": 8 * 1024 * 1024 * 1024},
+                    "disks": [{"mount": "/", "pct": 73, "used": 73, "total": 100}],
+                    "net": {"rx_bps": 2048, "tx_bps": 4096},
+                }
+            }
+        if topic == "jetson":
+            return {"data": {"gpu_load": 12.5, "power_w": 7.2}}
+        if topic == "health":
+            return {"data": {"score": 82, "drivers": []}}
+        return None
+
+    monkeypatch.setattr("app.api.chat.hub.latest", fake_latest)
+
+    answer = _direct_answer("give me a current resource usage summary")
+    assert answer is not None
+    assert "Health score: 82/100" in answer
+    assert "CPU: 42.0%" in answer
+    assert "RAM:" in answer
+    assert "Network: RX" in answer
+    assert "Jetson: GPU 12.5%, power 7.2W" in answer
+
+
+def test_sla_question_uses_health_history(monkeypatch):
+    from app.api.chat import _direct_answer
+
+    now = 1_000_000
+    monkeypatch.setattr("app.api.sla.time.time", lambda: now)
+    monkeypatch.setattr(
+        "app.api.sla.sdb.history",
+        lambda field, since, end, step: [
+            (now - 180, 90.0),
+            (now - 120, 55.0),
+            (now - 60, 80.0),
+        ],
+    )
+
+    answer = _direct_answer("what is the SLA uptime percentage and MTTR for 1h")
+    assert answer is not None
+    assert answer.startswith("SLA 1h:")
+    assert "uptime 66.67%" in answer
+    assert "incidents 1" in answer
+
+
+def test_direct_apps_consuming_cpu_returns_process_list(monkeypatch):
+    from app.api.chat import _direct_answer
+
+    def fake_latest(topic):
+        if topic == "system":
+            return {"data": {"cpu": {"total": 10.1, "load": [2.74, 3.10, 3.40], "cores": 6}}}
+        if topic == "processes":
+            return {
+                "data": {
+                    "procs": [
+                        {"pid": 101, "name": "api-server", "cpu": 31.2, "rss": 300 * 1024 * 1024},
+                        {"pid": 202, "name": "worker", "cpu": 12.4, "rss": 900 * 1024 * 1024},
+                        {"pid": 303, "name": "nginx", "cpu": 2.5, "rss": 80 * 1024 * 1024},
+                    ]
+                }
+            }
+        return None
+
+    monkeypatch.setattr("app.api.chat.hub.latest", fake_latest)
+
+    answer = _direct_answer("what are the applications consuming more CPU list out apps")
+    assert answer is not None
+    assert answer.startswith("Top processes by CPU:")
+    assert "api-server (pid 101): cpu 31.2%" in answer
+    assert "load avg" not in answer
+
+
+def test_direct_each_process_cpu_returns_process_list(monkeypatch):
+    from app.api.chat import _direct_answer
+
+    def fake_latest(topic):
+        if topic == "system":
+            return {"data": {"cpu": {"total": 12.6, "load": [2.71, 3.08, 3.38], "cores": 6}}}
+        if topic == "processes":
+            return {
+                "data": {
+                    "procs": [
+                        {"pid": 10, "name": "python", "cpu": 18.0, "rss": 100 * 1024 * 1024},
+                        {"pid": 20, "name": "postgres", "cpu": 7.0, "rss": 500 * 1024 * 1024},
+                    ]
+                }
+            }
+        return None
+
+    monkeypatch.setattr("app.api.chat.hub.latest", fake_latest)
+
+    answer = _direct_answer("what are the applications consuming CPU . check each process")
+    assert answer is not None
+    assert answer.startswith("Top processes by CPU:")
+    assert "python (pid 10): cpu 18.0%" in answer
+    assert "postgres (pid 20): cpu 7.0%" in answer
+
+
+def test_memory_leak_question_uses_leak_detector_not_memory_list(monkeypatch):
+    from app.api.chat import _direct_answer
+
+    def fake_latest(topic):
+        if topic == "system":
+            return {"data": {"mem": {"used": 2 * 1024 * 1024 * 1024, "total": 8 * 1024 * 1024 * 1024}}}
+        if topic == "processes":
+            return {
+                "data": {
+                    "procs": [
+                        {"pid": 27813, "name": "llama-server", "cpu": 0.1, "rss": 3900 * 1024 * 1024},
+                    ]
+                }
+            }
+        return None
+
+    class FakeLeakDetector:
+        @staticmethod
+        def current():
+            return []
+
+    monkeypatch.setattr("app.api.chat.hub.latest", fake_latest)
+    monkeypatch.setattr("app.analytics.leak.detector", FakeLeakDetector)
+
+    answer = _direct_answer("Is there any memory leak in applications")
+    assert answer == "No memory leaks detected."
+
+
+def test_direct_io_wait_keyword_returns_live_io_wait(monkeypatch):
+    from app.api.chat import _direct_answer
+
+    def fake_latest(topic):
+        if topic == "system":
+            return {
+                "data": {
+                    "io_wait": 7.5,
+                    "pressure": {"io": {"some_avg10": 2.25, "full_avg10": 0.5}},
+                }
+            }
+        return None
+
+    monkeypatch.setattr("app.api.chat.hub.latest", fake_latest)
+
+    answer = _direct_answer("show iowait and blocked io")
+    assert answer is not None
+    assert "I/O wait: 7.5%" in answer
+    assert "io pressure some_avg10: 2.25%" in answer
+
+
+def test_direct_jetson_doc_aliases_route_to_existing_support(monkeypatch):
+    from app.api.chat import _direct_answer
+
+    def fake_latest(topic):
+        if topic == "jetson":
+            return {
+                "data": {
+                    "gpu_load": 44.0,
+                    "power_w": 12.3,
+                    "power_mode": "MAXN",
+                    "emc_load": 66.0,
+                    "engines": {"NVDLA0": 25.0, "NVENC": 5.0},
+                }
+            }
+        return None
+
+    monkeypatch.setattr("app.api.chat.hub.latest", fake_latest)
+
+    gpu_answer = _direct_answer("what is gr3d_freq doing")
+    assert gpu_answer is not None
+    assert "GPU load: 44.0%" in gpu_answer
+
+    power_answer = _direct_answer("show nvpmodel and VDD power rail")
+    assert power_answer is not None
+    assert "Power mode: MAXN" in power_answer
+    assert "Total power: 12.3W" in power_answer
+
+    emc_answer = _direct_answer("show emc_freq and nvdla")
+    assert emc_answer is not None
+    assert "EMC (memory controller): 66.0%" in emc_answer
+    assert "NVDLA0: 25%" in emc_answer
+
+
+def test_gpu_process_and_power_question_does_not_return_cpu_process_list(monkeypatch):
+    from app.api.chat import _direct_answer
+
+    def fake_latest(topic):
+        if topic == "jetson":
+            return {
+                "data": {
+                    "gpu_load": 72.4,
+                    "gpu_ram_used": 512 * 1024 * 1024,
+                    "gpu_ram_total": 2048 * 1024 * 1024,
+                    "power_w": 9.8,
+                    "power_mode": "15W",
+                }
+            }
+        if topic == "processes":
+            return {
+                "data": {
+                    "procs": [
+                        {"pid": 167320, "name": "uvicorn", "cpu": 37.7, "rss": 323 * 1024 * 1024},
+                    ]
+                }
+            }
+        return None
+
+    monkeypatch.setattr("app.api.chat.hub.latest", fake_latest)
+
+    answer = _direct_answer("what is the current GPU process using and power consumption?")
+    assert answer is not None
+    assert "Per-process GPU attribution is not available" in answer
+    assert "GPU load: 72.4%" in answer
+    assert "GPU RAM:" in answer
+    assert "Power mode: 15W" in answer
+    assert "Total power: 9.8W" in answer
+    assert not answer.startswith("Top processes by CPU:")

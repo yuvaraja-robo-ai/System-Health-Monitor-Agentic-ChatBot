@@ -18,7 +18,7 @@ from app.agent import kb
 from app.analytics.anomaly import detector as anomaly_detector
 from app.analytics.health import scorer
 from app.analytics.leak import detector
-from app.api import apps, briefing, chat, config, derived, diagnose, logs, meta, processes, prometheus, silence, sla, system, thresholds, timeline, ws
+from app.api import apps, briefing, chat, chat_v2, config, derived, diagnose, logs, meta, processes, prometheus, silence, sla, system, thresholds, timeline, ws
 from app.collectors.app_monitor_collector import AppMonitorCollector
 from app.collectors.crash_collector import CrashCollector
 from app.collectors.dmesg_collector import DmesgCollector
@@ -101,6 +101,7 @@ async def lifespan(app: FastAPI):
     log.info("host=%s arch=%s", detect().host, detect().arch)
     sdb.init()
     ldb._conn()
+    runtime.init_llm_config()
     runtime.init_pinned_apps()
     if os.getenv("SH_ENABLE_KB", "0").lower() in {"1", "true", "yes"}:
         try:
@@ -197,6 +198,7 @@ app.include_router(sla.router)
 app.include_router(timeline.router)
 app.include_router(silence.router)
 app.include_router(chat.router)
+app.include_router(chat_v2.router)
 app.include_router(ws.router)
 
 

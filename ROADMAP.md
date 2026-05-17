@@ -1015,38 +1015,38 @@ Not yet scoped, for later consideration:
 
 ## Implementation Order (Recommended)
 
-For step-by-step execution across multiple sessions:
+For step-by-step execution across multiple sprints:
 
-**Session 1 (P0-1, P0-2):** ~3 hours
+**Sprint 1 (P0-1, P0-2):** ~3 hours
 - Add saturation metrics
 - Add anomaly detector
 - Verify via API
 
-**Session 2 (P0-3):** ~2 hours
+**Sprint 2 (P0-3):** ~2 hours
 - Build Health dashboard tab
 - Wire saturation + anomaly display
 
-**Session 3 (P1-1, P1-4):** ~4 hours
+**Sprint 3 (P1-1, P1-4):** ~4 hours
 - Correlation engine
 - Display in Diagnose tab
 
-**Session 4 (P1-2, P1-3):** ~1.5 hours
+**Sprint 4 (P1-2, P1-3):** ~1.5 hours
 - Weighted health score
 - Enable dmesg collector
 
-**Session 5 (P2-1, P2-2):** ~1.5 hours
+**Sprint 5 (P2-1, P2-2):** ~1.5 hours
 - Flat njmon JSON
 - Prometheus endpoint
 
-**Session 6 (P2-3, P3-1):** ~4 hours
+**Sprint 6 (P2-3, P3-1):** ~4 hours
 - Threshold settings UI
 - Alert router
 
-**Total est:** ~16 hours distributed across 6 focused sessions.
+**Total est:** ~16 hours distributed across 6 focused sprints.
 
 ---
 
-## Resume Instructions (for future sessions)
+## Resume Instructions (for future sprints)
 
 If this doc is being read in a new session:
 

@@ -26,6 +26,8 @@ async def _stream(ws: WebSocket, topic: str) -> None:
             await _send_json(ws, env)
     except WebSocketDisconnect:
         pass
+    except asyncio.CancelledError:
+        pass  # server shutdown — task cancelled, exit without logging as error
     except Exception:
         log.exception("ws %s failed", topic)
     finally:

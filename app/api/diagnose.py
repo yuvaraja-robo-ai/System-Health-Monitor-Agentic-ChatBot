@@ -32,6 +32,27 @@ async def kb_reload() -> dict[str, Any]:
     return {"ok": True, "entries": len(kb._META)}
 
 
+class KbSearchRequest(BaseModel):
+    query: str
+    k: int = 5
+
+
+@router.post("/kb/search")
+async def kb_search(req: KbSearchRequest) -> dict[str, Any]:
+    """Semantic search the runbook KB. Used by ai_core MCP tool `search_kb`."""
+    from app.agent import kb
+    results = kb.query(req.query, k=req.k)
+    return {"results": results}
+
+
+@router.post("/diagnose/context")
+async def diagnose_context(req: DiagnoseRequest) -> dict[str, Any]:
+    """Return scoped diagnostic context only (no LLM call).
+    Used by ai_core MCP tool `diagnose_scope`."""
+    ctx = await diag.collect_context_async(req.scope.model_dump())
+    return {"context": ctx, "digest_text": diag._digest_text(ctx)}
+
+
 @router.post("/diagnose")
 async def diagnose_endpoint(req: DiagnoseRequest) -> dict[str, Any]:
     global _last_call

@@ -48,6 +48,28 @@ _MIN_SAMPLES = _env_int("SH_ANOMALY_MIN_SAMPLES", 30)
 _Z_THRESHOLD = _env_float("SH_ANOMALY_Z_THRESHOLD", 3.0)
 _INTERVAL_S = _env_float("SH_ANOMALY_INTERVAL_S", 2.0)
 
+# z above this is treated as a regime change (workload loaded/unloaded),
+# not a point anomaly — buffer is reset to the new baseline instead of flagging.
+_REGIME_Z = _env_float("SH_ANOMALY_REGIME_Z", 12.0)
+
+# Per-metric stdev floor prevents hypersensitive baselines when a metric is
+# briefly stable (e.g. mem.pct constant at 77% → stdev≈0 → z=170 on any drop).
+# Unit matches the metric value (%, bps, etc.).
+_STDEV_FLOOR: dict[str, float] = {
+    "mem.pct": 2.0,
+    "swap.pct": 1.0,
+    "cpu.total": 3.0,
+    "cpu.saturation_pct": 3.0,
+    "cpu.load1": 0.2,
+    "io.wait": 0.5,
+    "net.rx_bps": 10_000.0,
+    "net.tx_bps": 10_000.0,
+    "jetson.gpu_load": 3.0,
+    "jetson.soc_temp": 1.0,
+    "jetson.power_w": 0.5,
+}
+_STDEV_FLOOR_DEFAULT = _env_float("SH_ANOMALY_STDEV_FLOOR", 0.5)
+
 
 class AnomalyDetector:
     """Rolling z-score anomaly detector.
@@ -97,14 +119,26 @@ class AnomalyDetector:
             self.active.pop(metric, None)
             return False
 
-        z = abs(value_f - mean) / stdev
+        # Apply per-metric stdev floor to prevent hypersensitive baselines.
+        # A very stable period (e.g. mem flat at 77% → stdev≈0.1) would otherwise
+        # produce z=170 on a normal workload shift. The floor ensures z stays sane.
+        stdev_eff = max(stdev, _STDEV_FLOOR.get(metric, _STDEV_FLOOR_DEFAULT))
+        z = abs(value_f - mean) / stdev_eff
+
+        if z > _REGIME_Z:
+            # Regime change (e.g. Ollama loaded/unloaded, reboot, collector restart).
+            # Reset buffer to new baseline so future samples get a fresh mean.
+            buf.clear()
+            buf.append(value_f)
+            self.active.pop(metric, None)
+            return False
 
         if z > _Z_THRESHOLD:
             entry = {
                 "metric": metric,
                 "value": round(value_f, 4),
                 "mean": round(mean, 4),
-                "stdev": round(stdev, 4),
+                "stdev": round(stdev_eff, 4),
                 "z": round(z, 2),
                 "ts": int(ts),
             }
@@ -122,7 +156,9 @@ class AnomalyDetector:
                     )
                 except Exception:
                     pass
-            return True
+            # Return True only on transition into anomalous state so the caller
+            # logs once per event, not once per sample for the entire duration.
+            return is_new
 
         # Back to normal
         self.active.pop(metric, None)

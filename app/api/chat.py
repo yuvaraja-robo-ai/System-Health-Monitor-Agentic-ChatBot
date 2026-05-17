@@ -105,6 +105,97 @@ def _kw_metric(q: str, metric: str) -> bool:
     return bool(kws) and _kw(q, *kws) and (not excl or not _kw(q, *excl))
 
 
+def _wants_process_list(q: str) -> bool:
+    """Detect questions asking which apps/processes are using a resource.
+
+    This must be broader than the plain "process" metric keyword because users
+    often ask for "apps consuming CPU" without saying "process".
+    """
+    if (
+        _kw_metric(q, "leak")
+        or _kw_metric(q, "crash")
+        or _kw_metric(q, "anomaly")
+        or _kw_metric(q, "logs")
+        or _kw_metric(q, "timeline")
+        or _kw_metric(q, "sla")
+        or _kw_metric(q, "services")
+        or _kw_metric(q, "summary")
+    ):
+        return False
+
+    target = _kw(
+        q,
+        "process", "processes", "pid",
+        "application", "applications", "app", "apps",
+        "service", "services",
+    )
+    asks_for_ranked_items = _kw(
+        q,
+        "top", "list", "show", "which", "what", "who", "each",
+        "consuming", "using", "eating", "highest", "most", "more",
+        "biggest", "largest", "check",
+    )
+    resource_metric = (
+        _kw_metric(q, "cpu")
+        or _kw_metric(q, "memory")
+        or _kw(q, "usage", "utilization", "resource", "resources")
+    )
+    return target and (asks_for_ranked_items or resource_metric)
+
+
+def _process_list_answer(q: str, procs: list[dict[str, Any]]) -> str:
+    if not procs:
+        return "No process data available."
+
+    by_mem = _kw_metric(q, "memory") and not _kw_metric(q, "cpu")
+    sort_key = (lambda p: p.get("rss", 0)) if by_mem else (lambda p: p.get("cpu", 0))
+    label = "memory (RSS)" if by_mem else "CPU"
+    top = sorted(procs, key=sort_key, reverse=True)[:8]
+    lines = [
+        f"{p['name']} (pid {p['pid']}): cpu {p.get('cpu',0):.1f}%  mem {_fmtb(p.get('rss',0))}"
+        for p in top
+    ]
+    return f"Top processes by {label}:\n" + "\n".join(lines)
+
+
+def _jetson_gpu_power_answer(q: str, jetson: dict[str, Any]) -> str:
+    if not jetson:
+        return "No GPU/power data (Jetson not detected or jtop not running)."
+
+    wants_gpu = _kw_metric(q, "gpu")
+    wants_power = _kw_metric(q, "power")
+    wants_process_attribution = _kw(q, "process", "processes", "application", "applications", "app", "apps", "pid")
+    parts = []
+
+    if wants_process_attribution and wants_gpu:
+        parts.append("Per-process GPU attribution is not available from the current Jetson collector.")
+
+    if wants_gpu:
+        load = jetson.get("gpu_load")
+        if load is not None:
+            parts.append(f"GPU load: {load:.1f}%")
+        ram_used = jetson.get("gpu_ram_used")
+        ram_total = jetson.get("gpu_ram_total")
+        if ram_used is not None:
+            parts.append(f"GPU RAM: {_fmtb(ram_used)} / {_fmtb(ram_total or 0)}")
+        for eng, pct in (jetson.get("engines") or {}).items():
+            parts.append(f"{eng}: {pct:.0f}%")
+
+    if wants_power:
+        power_mode = jetson.get("power_mode")
+        if power_mode:
+            parts.append(f"Power mode: {power_mode}")
+        pw = jetson.get("power_w")
+        if pw is not None:
+            parts.append(f"Total power: {pw:.1f}W")
+        for rail, w in (jetson.get("power_rails") or {}).items():
+            parts.append(f"  {rail}: {w:.2f}W")
+
+    if parts:
+        return "\n".join(parts)
+    return "GPU/power data not available."
+
+
 def _sanitize_scope(scope: dict[str, Any] | None) -> dict[str, Any]:
     scope = scope or {}
     out: dict[str, Any] = {}
@@ -203,20 +294,16 @@ def _normalize_tool_arguments(parsed: dict[str, Any], tool_name: str, tools: dic
 
 
 def _window_to_seconds(window: str | None) -> int:
+    from app.utils.service import parse_window
+
     if not window:
         return int(time.time()) - 900
-    known = {
-        "1m": 60,
-        "5m": 300,
-        "15m": 900,
-        "1h": 3600,
-        "6h": 21600,
-        "24h": 86400,
-    }
-    if window in known:
-        return int(time.time()) - known[window]
     try:
-        return int(time.time()) - int(window)
+        fallback = int(window)
+    except (TypeError, ValueError):
+        fallback = 900
+    try:
+        return int(time.time()) - parse_window(window, default=fallback)
     except (TypeError, ValueError):
         return int(time.time()) - 900
 
@@ -267,6 +354,127 @@ def _log_clusters(window: str = "15m", limit: int = 10) -> str:
     return "\n".join(lines)
 
 
+def _wants_recent_log_errors(q: str) -> bool:
+    return _kw(q, "error", "errors", "err", "fatal", "critical", "crit", "warning", "warnings", "warn")
+
+
+def _extract_window(q: str, default: str = "15m") -> str:
+    match = re.search(r"\b(\d+)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days)\b", q)
+    if not match:
+        if _kw(q, "today", "24h", "day"):
+            return "24h"
+        if _kw(q, "week", "7d"):
+            return "7d"
+        return default
+    value = match.group(1)
+    unit = match.group(2)
+    suffix = "s"
+    if unit.startswith("m"):
+        suffix = "m"
+    elif unit.startswith("h"):
+        suffix = "h"
+    elif unit.startswith("d"):
+        suffix = "d"
+    return f"{value}{suffix}"
+
+
+def _system_summary_answer(sys: dict[str, Any], jetson: dict[str, Any], health_data: dict[str, Any]) -> str:
+    parts = []
+    score = health_data.get("score")
+    if score is not None:
+        label = "healthy" if score >= 80 else ("degraded" if score >= 60 else "critical")
+        parts.append(f"Health score: {score}/100 ({label})")
+
+    cpu = sys.get("cpu") or {}
+    total = cpu.get("total")
+    if total is not None:
+        load = cpu.get("load") or []
+        load_txt = f" load {load[0]:.2f}" if load else ""
+        parts.append(f"CPU: {total:.1f}%{load_txt}")
+
+    mem = sys.get("mem") or {}
+    used = mem.get("used")
+    total_mem = mem.get("total")
+    if used is not None and total_mem:
+        parts.append(f"RAM: {_fmtb(used)} / {_fmtb(total_mem)} ({100 * used / total_mem:.1f}%)")
+
+    disks = sys.get("disks") or []
+    if disks:
+        hottest_disk = max(disks, key=lambda d: float(d.get("pct") or 0))
+        parts.append(f"Disk {hottest_disk.get('mount','?')}: {hottest_disk.get('pct','?')}% used")
+
+    net = sys.get("net") or {}
+    if net.get("rx_bps") is not None or net.get("tx_bps") is not None:
+        parts.append(f"Network: RX {_fmtb(net.get('rx_bps'))}/s TX {_fmtb(net.get('tx_bps'))}/s")
+
+    if jetson:
+        gpu = jetson.get("gpu_load")
+        power = jetson.get("power_w")
+        gpu_part = f"GPU {gpu:.1f}%" if gpu is not None else "GPU n/a"
+        power_part = f"power {power:.1f}W" if power is not None else "power n/a"
+        parts.append(f"Jetson: {gpu_part}, {power_part}")
+
+    drivers = health_data.get("drivers") or []
+    if drivers:
+        parts.append("Top issues: " + ", ".join(f"{d.get('factor')}({d.get('weight')})" for d in drivers[:3]))
+
+    return "\n".join(parts) if parts else "No live system summary available yet."
+
+
+def _timeline_answer(window: str = "1h") -> str:
+    from app.api.timeline import timeline
+    from app.utils.service import parse_window
+
+    try:
+        data = timeline(window=parse_window(window, default=3600), limit=8)
+    except Exception as e:
+        return f"Timeline unavailable: {e}"
+    events = data.get("events") or []
+    if not events:
+        return f"No incidents/events found in {window}."
+    lines = [f"{len(events)} recent incident/event(s) in {window}:"]
+    for event in events[:8]:
+        lines.append(f"{event.get('kind')} {event.get('source')}: {event.get('message')}")
+    return "\n".join(lines)
+
+
+def _sla_answer(window: str = "7d") -> str:
+    from app.api.sla import sla
+
+    try:
+        data = sla(window=window)
+    except Exception as e:
+        return f"SLA unavailable: {e}"
+    if data.get("samples", 0) == 0 or data.get("uptime_pct") is None:
+        return f"SLA: no health-score history available for {window}."
+    mttr = _fmts(data.get("mttr_s")) if data.get("mttr_s") is not None else "n/a"
+    return (
+        f"SLA {window}: uptime {data.get('uptime_pct')}%, "
+        f"downtime {_fmts(data.get('downtime_s'))}, "
+        f"incidents {data.get('incident_count')}, MTTR {mttr}"
+    )
+
+
+def _services_answer(window: str = "24h") -> str:
+    from app.api.derived import units
+
+    try:
+        rows = units(window=window, limit=8)
+    except Exception as e:
+        return f"Service status unavailable: {e}"
+    if not rows:
+        return "No service/unit status data available."
+    bad = [r for r in rows if r.get("status") in {"err", "warn"}]
+    selected = bad or rows[:5]
+    lines = [f"{len(bad)} service(s) need attention in {window}:" if bad else "Top services are OK:"]
+    for row in selected[:8]:
+        lines.append(
+            f"{row.get('name')}: {row.get('status')} {row.get('active_state')}/{row.get('sub_state')} "
+            f"errors={row.get('errors', 0)} warns={row.get('warns', 0)} crashes={row.get('crashes', 0)}"
+        )
+    return "\n".join(lines)
+
+
 # ──────────────────────────────────────────────────────────────
 # Layer 1: direct live-data answers
 # ──────────────────────────────────────────────────────────────
@@ -300,10 +508,50 @@ def _direct_answer(question: str) -> str | None:
             ]
             return "\n".join(lines)
 
-    # ── Logs / log availability ──
+    # ── Jetson GPU/power query ──
+    # Keep this before process-list routing so "GPU process using and power"
+    # does not get treated as a generic CPU process request.
+    if _kw_metric(q, "gpu") or _kw_metric(q, "power"):
+        return _jetson_gpu_power_answer(q, jetson)
+
+    # ── Incident timeline / SLA ──
+    if _kw_metric(q, "timeline"):
+        return _timeline_answer(_extract_window(q, default="1h"))
+
+    if _kw_metric(q, "sla") and not _kw_metric(q, "logs"):
+        return _sla_answer(_extract_window(q, default="7d"))
+
+    if _kw_metric(q, "services"):
+        return _services_answer(_extract_window(q, default="24h"))
+
+    # ── Logs / recent errors ──
+    # Keep this before process-list routing so "errors from applications" is
+    # treated as log intent, not as a generic "applications" process query.
     if _kw_metric(q, "logs"):
+        window = _extract_window(q, default="15m")
         if _kw_metric(q, "log_availability"):
-            return _log_status()
+            return _log_status(window=window)
+        if _wants_recent_log_errors(q):
+            return _log_clusters(window=window)
+        return _log_status(window=window)
+
+    # ── System summary / overview ──
+    specific_metric = any(
+        _kw_metric(q, metric)
+        for metric in (
+            "cpu", "memory", "swap", "disk", "temperature", "network",
+            "uptime", "pressure", "io_wait", "anomaly", "leak", "crash",
+            "process", "load_average", "emc",
+        )
+    )
+    if _kw_metric(q, "summary") and not specific_metric:
+        return _system_summary_answer(sys, jetson, health_data)
+
+    # ── Ranked app/process resource query ──
+    # Run this before generic CPU/RAM summaries so "apps consuming CPU" returns
+    # the process list instead of repeating the total CPU snapshot.
+    if _wants_process_list(q):
+        return _process_list_answer(q, procs_snap)
 
     # ── CPU ──
     if _kw_metric(q, "cpu"):
@@ -327,22 +575,17 @@ def _direct_answer(question: str) -> str | None:
         ctx_rate = cpu.get("ctx_switch_rate")
         if ctx_rate:
             parts.append(f"ctx-switches {ctx_rate:.0f}/s")
+        intr_rate = cpu.get("intr_rate")
+        if intr_rate:
+            parts.append(f"interrupts {intr_rate:.0f}/s")
         return "\n".join(parts) if parts else None
 
     # ── Applications consuming memory (RSS-sorted process list) ──
-    if _kw_metric(q, "memory") and _kw_metric(q, "memory_consumers"):
-        procs = procs_snap
-        if not procs:
-            return "No process data available."
-        top = sorted(procs, key=lambda p: p.get("rss", 0), reverse=True)[:8]
-        lines = [
-            f"{p['name']} (pid {p['pid']}): mem {_fmtb(p.get('rss', 0))}  cpu {p.get('cpu', 0):.1f}%"
-            for p in top
-        ]
-        return "Top processes by memory (RSS):\n" + "\n".join(lines)
+    if _kw_metric(q, "memory") and _kw_metric(q, "memory_consumers") and not _kw_metric(q, "leak"):
+        return _process_list_answer(q, procs_snap)
 
     # ── Memory / RAM ──
-    if _kw_metric(q, "memory"):
+    if _kw_metric(q, "memory") and not _kw_metric(q, "leak"):
         parts = []
         used = mem.get("used")
         total = mem.get("total")
@@ -413,31 +656,11 @@ def _direct_answer(question: str) -> str | None:
 
     # ── GPU ──
     if _kw_metric(q, "gpu"):
-        if not jetson:
-            return "No GPU data (Jetson not detected or jtop not running)."
-        parts = []
-        load = jetson.get("gpu_load")
-        if load is not None:
-            parts.append(f"GPU load: {load:.1f}%")
-        ram_used = jetson.get("gpu_ram_used")
-        ram_total = jetson.get("gpu_ram_total")
-        if ram_used is not None:
-            parts.append(f"GPU RAM: {_fmtb(ram_used)} / {_fmtb(ram_total or 0)}")
-        for eng, pct in (jetson.get("engines") or {}).items():
-            parts.append(f"{eng}: {pct:.0f}%")
-        return "\n".join(parts) if parts else "GPU data not available."
+        return _jetson_gpu_power_answer(q, jetson)
 
     # ── Power ──
     if _kw_metric(q, "power"):
-        if not jetson:
-            return "No power data (Jetson not detected)."
-        parts = []
-        pw = jetson.get("power_w")
-        if pw is not None:
-            parts.append(f"Total power: {pw:.1f}W")
-        for rail, w in (jetson.get("power_rails") or {}).items():
-            parts.append(f"  {rail}: {w:.2f}W")
-        return "\n".join(parts) if parts else "Power data not available."
+        return _jetson_gpu_power_answer(q, jetson)
 
     # ── Fan ──
     if _kw_metric(q, "fan"):
@@ -490,6 +713,19 @@ def _direct_answer(question: str) -> str | None:
                     lines.append(f"{kind}.{field}: {val:.2f}%")
         return "\n".join(lines) if lines else "No PSI data."
 
+    # ── I/O wait ──
+    if _kw_metric(q, "io_wait"):
+        parts = []
+        io_wait = sys.get("io_wait")
+        if io_wait is not None:
+            parts.append(f"I/O wait: {io_wait:.1f}%")
+        io_pressure = pressure.get("io") or {}
+        for field in ("some_avg10", "full_avg10"):
+            val = io_pressure.get(field)
+            if val is not None:
+                parts.append(f"io pressure {field}: {val:.2f}%")
+        return "\n".join(parts) if parts else "I/O wait data not available."
+
     # ── Anomalies ──
     if _kw_metric(q, "anomaly"):
         from app.analytics.anomaly import detector as adet
@@ -523,18 +759,7 @@ def _direct_answer(question: str) -> str | None:
 
     # ── Processes ──
     if _kw_metric(q, "process"):
-        procs = procs_snap
-        if not procs:
-            return "No process data available."
-        by_mem = _kw_metric(q, "memory_consumers")
-        sort_key = (lambda p: p.get("rss", 0)) if by_mem else (lambda p: p.get("cpu", 0))
-        label = "memory (RSS)" if by_mem else "CPU"
-        top = sorted(procs, key=sort_key, reverse=True)[:8]
-        lines = [
-            f"{p['name']} (pid {p['pid']}): cpu {p.get('cpu',0):.1f}%  mem {_fmtb(p.get('rss',0))}"
-            for p in top
-        ]
-        return f"Top processes by {label}:\n" + "\n".join(lines)
+        return _process_list_answer(q, procs_snap)
 
     # ── Load average ──
     if _kw_metric(q, "load_average"):
@@ -725,7 +950,28 @@ class ChatRequest(BaseModel):
 
 def _llm_configured() -> bool:
     from app.config import settings
-    return bool(settings.ollama_url or settings.llama_url)
+    provider = (settings.llm_provider or "auto").strip()
+    if provider == "none":
+        return False
+    if provider == "auto":
+        return bool(
+            settings.ollama_url
+            or settings.llama_url
+            or settings.openai_api_key
+            or settings.anthropic_api_key
+            or settings.gemini_api_key
+        )
+    if provider == "ollama":
+        return bool(settings.ollama_url)
+    if provider == "llama_cpp":
+        return bool(settings.llama_url)
+    if provider in {"openai", "openai_compatible"}:
+        return bool(settings.openai_api_key)
+    if provider == "anthropic":
+        return bool(settings.anthropic_api_key)
+    if provider == "gemini":
+        return bool(settings.gemini_api_key)
+    return False
 
 
 @router.post("/chat")
@@ -759,7 +1005,7 @@ async def chat_endpoint(body: ChatRequest) -> dict[str, Any]:
             }
         return {
             "answer": (
-                "No LLM configured (set SH_OLLAMA_URL or SH_LLAMA_URL).\n\n"
+                "No LLM configured (choose a provider in LLM settings, or set SH_OLLAMA_URL / SH_LLAMA_URL).\n\n"
                 f"Live system snapshot:\n{digest}"
             ),
             "backend": "none",

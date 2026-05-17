@@ -28,9 +28,27 @@ class Settings(BaseSettings):
     log_max_tail: int = 5000
 
     llama_url: str | None = None
-    ollama_url: str | None = None
-    llm_model: str = "llama3.2:3b"
+    ollama_url: str = "http://127.0.0.1:11434"
+    llm_provider: str = "auto"
+    llm_model: str = "qwen3:1.7b"
+    llm_fallback_model: str = "nemotron-mini:4b"
     llm_timeout_s: float = 30.0
+
+    # ── Agent (executor / verifier / UI composer) ─────────────────────────────
+    executor_provider: str = "ollama"
+    executor_model: str = "qwen3:1.7b"
+    verifier_provider: str = "ollama"
+    verifier_model: str = "qwen3:1.7b"
+    ui_provider: str = "ollama"
+    ui_model: str = "nemotron-mini:4b"
+    llm_max_tokens: int = 512
+    llm_temperature: float = 0.2
+    openai_api_key: str | None = None
+    openai_base_url: str = "https://api.openai.com/v1"
+    anthropic_api_key: str | None = None
+    anthropic_base_url: str = "https://api.anthropic.com"
+    gemini_api_key: str | None = None
+    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
 
     embed_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     kb_dir: Path | None = None

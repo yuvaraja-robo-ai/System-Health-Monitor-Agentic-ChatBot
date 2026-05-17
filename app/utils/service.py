@@ -17,7 +17,16 @@ def parse_window(s: str | int | None, default: int = 300) -> int:
         return default
     if isinstance(s, int):
         return s
-    return WINDOW_MAP.get(str(s), default)
+    value = str(s).strip().lower()
+    if value in WINDOW_MAP:
+        return WINDOW_MAP[value]
+    match = re.fullmatch(r"(\d+)\s*([smhd])", value)
+    if not match:
+        return default
+    amount = int(match.group(1))
+    unit = match.group(2)
+    scale = {"s": 1, "m": 60, "h": 3600, "d": 86400}[unit]
+    return amount * scale
 
 
 def normalize(name: str | None) -> str:

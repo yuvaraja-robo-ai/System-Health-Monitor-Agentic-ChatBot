@@ -105,8 +105,154 @@ function Spark({ data, tone = "accent", height = 48, min, max }) {
   );
 }
 
+const THEMES = [
+  ["graphite", "Graphite"],
+  ["midnight", "Midnight"],
+  ["daylight", "Daylight"],
+  ["terminal", "Terminal"],
+];
+
+const issueRank = { critical: 0, error: 1, warning: 2, info: 3 };
+const issueTone = (severity) => severity === "critical" || severity === "error" ? "err" : severity === "warning" ? "warn" : "info";
+const logIsError = (level) => ["ERR", "ERROR", "CRIT", "CRITICAL", "FATAL"].includes((level || "").toUpperCase());
+
+function buildNotifications({ health, anomalies, crashes, leaks, logClusters, units }) {
+  const items = [];
+  const score = health?.score;
+  if (score != null && score < 85) {
+    const drivers = (health?.drivers || []).map(d => d.factor).slice(0, 3).join(" · ");
+    items.push({
+      id: "health-score",
+      severity: score < 60 ? "critical" : "warning",
+      title: score < 60 ? `Critical health score: ${score}/100` : `Degraded health score: ${score}/100`,
+      detail: drivers || "Health score is below the normal operating range.",
+      tab: "health",
+    });
+  }
+
+  const crashCounts = crashes?.counts || {};
+  const crashTotal = Object.values(crashCounts).reduce((n, v) => n + Number(v || 0), 0);
+  if (crashTotal > 0) {
+    const top = Object.entries(crashCounts).sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0))[0];
+    items.push({
+      id: "crashes",
+      severity: "critical",
+      title: `${crashTotal} crash${crashTotal === 1 ? "" : "es"} detected in 24h`,
+      detail: top ? `${top[0]}: ${top[1]}` : "Recent crash events are available.",
+      tab: "crashes",
+    });
+  }
+
+  const flaggedLeaks = (leaks || []).filter(l => l.flagged);
+  if (flaggedLeaks.length) {
+    const first = flaggedLeaks[0];
+    items.push({
+      id: "leaks",
+      severity: "critical",
+      title: `${flaggedLeaks.length} possible memory leak${flaggedLeaks.length === 1 ? "" : "s"}`,
+      detail: first.name ? `${first.name}${first.slope_mb_min != null ? ` slope ${first.slope_mb_min.toFixed(3)} MB/min` : ""}` : "Leak detector has flagged one or more processes.",
+      tab: "leaks",
+    });
+  }
+
+  const errorClusters = (logClusters || []).filter(c => logIsError(c.level));
+  if (errorClusters.length) {
+    const first = errorClusters[0];
+    items.push({
+      id: "log-errors",
+      severity: (first.level || "").toUpperCase().includes("CRIT") || (first.level || "").toUpperCase() === "FATAL" ? "critical" : "error",
+      title: `${errorClusters.length} recent error log cluster${errorClusters.length === 1 ? "" : "s"}`,
+      detail: `${first.service || "unknown"}: ${first.sample || first.signature || "error log cluster"}`,
+      tab: "logs",
+    });
+  }
+
+  const badUnits = (units || []).filter(u => ["err", "warn"].includes(u.status));
+  if (badUnits.length) {
+    const failed = badUnits.filter(u => u.status === "err");
+    const first = failed[0] || badUnits[0];
+    items.push({
+      id: "services",
+      severity: failed.length ? "error" : "warning",
+      title: `${badUnits.length} service${badUnits.length === 1 ? "" : "s"} need attention`,
+      detail: `${first.name || "service"}: ${first.detail || first.sub_state || first.status}`,
+      tab: "services",
+    });
+  }
+
+  const activeAnomalies = anomalies?.current || [];
+  if (activeAnomalies.length) {
+    const top = [...activeAnomalies].sort((a, b) => Math.abs(Number(b.z || 0)) - Math.abs(Number(a.z || 0)))[0];
+    items.push({
+      id: "anomalies",
+      severity: activeAnomalies.some(a => Math.abs(Number(a.z || 0)) >= 5) ? "error" : "warning",
+      title: `${activeAnomalies.length} active anomal${activeAnomalies.length === 1 ? "y" : "ies"}`,
+      detail: top ? `${top.metric || "metric"} z=${top.z}` : "Anomaly detector has active findings.",
+      tab: "health",
+    });
+  }
+
+  return items.sort((a, b) => issueRank[a.severity] - issueRank[b.severity]);
+}
+
+function NotificationCenter({ items, open, onToggle, onSelect }) {
+  const criticalCount = items.filter(n => n.severity === "critical" || n.severity === "error").length;
+  const top = items[0];
+  return (
+    <div className="notify-wrap">
+      <button
+        className={`notify-button ${items.length ? issueTone(top.severity) : "ok"} ${open ? "active" : ""}`}
+        onClick={onToggle}
+        aria-expanded={open}
+        aria-label="Issue notifications"
+      >
+        <span className="notify-icon">!</span>
+        <span>{items.length ? `${items.length} issue${items.length === 1 ? "" : "s"}` : "No issues"}</span>
+        {criticalCount > 0 && <span className="notify-count">{criticalCount}</span>}
+      </button>
+      {open && (
+        <div className="notify-menu" role="dialog" aria-label="Current issue notifications">
+          <div className="notify-head">
+            <strong>Notifications</strong>
+            <span>{items.length ? `${criticalCount} critical/error` : "clear"}</span>
+          </div>
+          {items.length === 0 ? (
+            <div className="notify-empty">No current critical, error, crash, leak, or anomaly notifications.</div>
+          ) : (
+            <div className="notify-list">
+              {items.map(item => (
+                <button key={item.id} className={`notify-item ${issueTone(item.severity)}`} onClick={() => onSelect(item.tab)}>
+                  <span className="notify-sev">{item.severity}</span>
+                  <span className="notify-copy">
+                    <strong>{item.title}</strong>
+                    <span>{item.detail}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NotificationBanner({ items, onSelect }) {
+  if (!items.length) return null;
+  const top = items[0];
+  const hidden = items.length - 1;
+  return (
+    <button className={`issue-banner ${issueTone(top.severity)}`} onClick={() => onSelect(top.tab)}>
+      <span className="issue-banner-sev">{top.severity}</span>
+      <strong>{top.title}</strong>
+      <span>{top.detail}</span>
+      {hidden > 0 && <span className="issue-banner-more">+{hidden} more</span>}
+    </button>
+  );
+}
+
 // ───── top bar ─────
-function TopBar({ meta, health, wsStatus }) {
+function TopBar({ meta, health, wsStatus, theme, onThemeChange }) {
   const score = health?.score ?? null;
   const tone = score == null ? "" : score >= 85 ? "ok" : score >= 60 ? "warn" : "err";
   const drivers = (health?.drivers || []).map(d => d.factor).slice(0, 3).join(" · ");
@@ -123,6 +269,9 @@ function TopBar({ meta, health, wsStatus }) {
         </>}
       </div>
       <div className="spacer" />
+      <select className="theme-select" value={theme} onChange={e => onThemeChange(e.target.value)} aria-label="Theme">
+        {THEMES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+      </select>
       <div className={`health ${tone}`}>
         <div>
           <div style={{ fontSize: 10, color: "var(--fg-3)", textTransform: "uppercase", letterSpacing: ".1em" }}>Health</div>
@@ -1886,73 +2035,248 @@ function AgentChat({ open, onClose }) {
   if (!open) return null;
 
   return (
-    <div style={{
-      position: "fixed", top: 0, right: 0, bottom: 0, width: 340,
-      background: "var(--paper)", borderLeft: "1px solid var(--border)",
-      display: "flex", flexDirection: "column", zIndex: 200,
-      boxShadow: "-4px 0 16px rgba(0,0,0,0.15)",
-    }}>
-      <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ fontWeight: 700, fontSize: 13, flex: 1 }}>Agent Chat</span>
-        <select value={scope} onChange={e => setScope(e.target.value)} style={{ fontSize: 11, padding: "2px 4px" }}>
+    <aside className="agent-panel" aria-label="Agent chat">
+      <div className="agent-head">
+        <div className="agent-title">
+          <strong>Agent Chat</strong>
+          <span>{scope} live context</span>
+        </div>
+        <select value={scope} onChange={e => setScope(e.target.value)} aria-label="Chat context window">
           {["1m","5m","15m","1h","6h","24h"].map(s => <option key={s} value={s}>{s}</option>)}
         </select>
-        <button className="btn" onClick={clear} style={{ fontSize: 11, padding: "2px 8px" }}>clear</button>
-        <button className="btn" onClick={onClose} style={{ fontSize: 11, padding: "2px 8px" }}>✕</button>
+        <button className="btn secondary" onClick={clear}>clear</button>
+        <button className="btn secondary agent-close" onClick={onClose} aria-label="Close agent chat">x</button>
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+      <div className="agent-messages">
         {messages.length === 0 && (
-          <div style={{ color: "var(--fg-3)", fontSize: 12, textAlign: "center", marginTop: 40 }}>
-            Ask anything about the system.<br/>
-            <span style={{ fontSize: 11 }}>e.g. "why is memory climbing?" or "what's using the most CPU?"</span>
+          <div className="agent-empty">
+            No messages yet.
           </div>
         )}
         {messages.map((m, i) => (
-          <div key={i} style={{
-            alignSelf: m.role === "user" ? "flex-end" : "flex-start",
-            maxWidth: "90%",
-          }}>
-            <div style={{
-              padding: "8px 11px",
-              borderRadius: m.role === "user" ? "12px 12px 2px 12px" : "12px 12px 12px 2px",
-              background: m.role === "user" ? "var(--teal)" : "var(--bg-2, #f0f0f0)",
-              color: m.role === "user" ? "#fff" : "var(--ink)",
-              fontSize: 12, lineHeight: 1.5,
-              whiteSpace: "pre-wrap", wordBreak: "break-word",
-            }}>
+          <div key={i} className={`agent-msg ${m.role}`}>
+            <div className="agent-bubble">
               {m.content}
             </div>
             {m.latency_ms && (
-              <div style={{ fontSize: 10, color: "var(--fg-3)", textAlign: m.role === "assistant" ? "left" : "right", marginTop: 2 }}>
+              <div className="agent-meta">
                 {m.backend} · {m.latency_ms}ms
               </div>
             )}
           </div>
         ))}
         {loading && (
-          <div style={{ alignSelf: "flex-start", padding: "8px 11px", borderRadius: "12px 12px 12px 2px",
-            background: "var(--bg-2, #f0f0f0)", fontSize: 12, color: "var(--fg-2)" }}>
-            thinking…
+          <div className="agent-msg assistant">
+            <div className="agent-bubble" style={{ color: "var(--fg-2)" }}>
+              thinking...
+            </div>
           </div>
         )}
         <div ref={bottomRef} />
       </div>
 
-      <div style={{ padding: "10px 12px", borderTop: "1px solid var(--border)", display: "flex", gap: 6 }}>
+      <div className="agent-compose">
         <textarea
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={onKey}
-          placeholder="Ask the agent… (Enter to send)"
+          placeholder="Ask the agent..."
           rows={2}
-          style={{ flex: 1, resize: "none", fontSize: 12, padding: "6px 8px",
-            border: "1px solid var(--border)", borderRadius: 6, fontFamily: "inherit" }}
         />
-        <button className="btn" onClick={send} disabled={loading || !input.trim()}
-          style={{ alignSelf: "flex-end", padding: "6px 12px" }}>
+        <button className="btn" onClick={send} disabled={loading || !input.trim()} aria-label="Send message">
           ↑
         </button>
+      </div>
+    </aside>
+  );
+}
+
+const PROVIDER_DEFAULTS = {
+  auto: { model: "llama3.2:3b" },
+  none: { model: "none" },
+  ollama: { model: "llama3.2:3b", ollama_url: "http://127.0.0.1:11434" },
+  llama_cpp: { model: "local-model", llama_url: "http://127.0.0.1:8080" },
+  openai: { model: "gpt-5.2", openai_base_url: "https://api.openai.com/v1" },
+  openai_compatible: { model: "local-model", openai_base_url: "http://127.0.0.1:8000/v1" },
+  anthropic: { model: "claude-opus-4-1-20250805", anthropic_base_url: "https://api.anthropic.com" },
+  gemini: { model: "gemini-2.5-flash", gemini_base_url: "https://generativelanguage.googleapis.com/v1beta" },
+};
+
+function LLMConfigPanel({ open, onClose }) {
+  const [cfg, setCfg] = useState(null);
+  const [apiKey, setApiKey] = useState("");
+  const [clearKey, setClearKey] = useState(false);
+  const [status, setStatus] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setStatus("");
+    fetch("/api/config/llm")
+      .then(r => r.json())
+      .then(j => setCfg(j))
+      .catch(e => setStatus(`load failed: ${e.message}`));
+  }, [open]);
+
+  if (!open) return null;
+
+  const set = (key, value) => setCfg(c => ({ ...(c || {}), [key]: value }));
+  const provider = cfg?.provider || "auto";
+  const needsKey = ["openai", "openai_compatible", "anthropic", "gemini"].includes(provider);
+  const hasKey =
+    provider === "anthropic" ? cfg?.has_anthropic_api_key :
+    provider === "gemini" ? cfg?.has_gemini_api_key :
+    cfg?.has_openai_api_key;
+
+  const providerChanged = (value) => {
+    const defaults = PROVIDER_DEFAULTS[value] || {};
+    setCfg(c => ({ ...(c || {}), provider: value, ...defaults }));
+    setApiKey("");
+    setClearKey(false);
+  };
+
+  const save = async () => {
+    if (!cfg || saving) return;
+    setSaving(true);
+    setStatus("saving...");
+    try {
+      const body = {
+        provider,
+        model: cfg.model || PROVIDER_DEFAULTS[provider]?.model || "local-model",
+        timeout_s: Number(cfg.timeout_s || 30),
+        max_tokens: Number(cfg.max_tokens || 512),
+        temperature: Number(cfg.temperature ?? 0.2),
+        ollama_url: cfg.ollama_url || "",
+        llama_url: cfg.llama_url || "",
+        openai_base_url: cfg.openai_base_url || PROVIDER_DEFAULTS.openai.openai_base_url,
+        anthropic_base_url: cfg.anthropic_base_url || PROVIDER_DEFAULTS.anthropic.anthropic_base_url,
+        gemini_base_url: cfg.gemini_base_url || PROVIDER_DEFAULTS.gemini.gemini_base_url,
+        api_key: apiKey,
+        clear_api_key: clearKey,
+      };
+      const r = await fetch("/api/config/llm", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.detail || `HTTP ${r.status}`);
+      setCfg(j);
+      setApiKey("");
+      setClearKey(false);
+      setStatus("saved");
+    } catch (e) {
+      setStatus(`save failed: ${e.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="settings-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="settings-panel" role="dialog" aria-modal="true" aria-label="LLM configuration">
+        <div className="settings-head">
+          <h3>LLM Configuration</h3>
+          <button className="btn secondary" onClick={onClose}>close</button>
+        </div>
+        {!cfg ? (
+          <div className="settings-body"><div className="field-note">{status || "loading..."}</div></div>
+        ) : (
+          <>
+            <div className="settings-body">
+              <div className="settings-grid">
+                <div className="field">
+                  <label>Provider</label>
+                  <select value={provider} onChange={e => providerChanged(e.target.value)}>
+                    <option value="auto">Auto detect</option>
+                    <option value="none">Disabled</option>
+                    <option value="ollama">Local Ollama</option>
+                    <option value="llama_cpp">Local llama.cpp</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="openai_compatible">OpenAI-compatible API</option>
+                    <option value="anthropic">Claude / Anthropic</option>
+                    <option value="gemini">Gemini</option>
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Model</label>
+                  <input value={cfg.model || ""} onChange={e => set("model", e.target.value)} placeholder="model id" />
+                </div>
+
+                {provider === "ollama" && (
+                  <div className="field full">
+                    <label>Ollama URL</label>
+                    <input value={cfg.ollama_url || ""} onChange={e => set("ollama_url", e.target.value)} placeholder="http://127.0.0.1:11434" />
+                  </div>
+                )}
+                {provider === "llama_cpp" && (
+                  <div className="field full">
+                    <label>llama.cpp URL</label>
+                    <input value={cfg.llama_url || ""} onChange={e => set("llama_url", e.target.value)} placeholder="http://127.0.0.1:8080" />
+                  </div>
+                )}
+                {provider === "openai" && (
+                  <div className="field full">
+                    <label>OpenAI base URL</label>
+                    <input value={cfg.openai_base_url || ""} onChange={e => set("openai_base_url", e.target.value)} />
+                  </div>
+                )}
+                {provider === "openai_compatible" && (
+                  <div className="field full">
+                    <label>OpenAI-compatible base URL</label>
+                    <input value={cfg.openai_base_url || ""} onChange={e => set("openai_base_url", e.target.value)} placeholder="http://127.0.0.1:8000/v1" />
+                  </div>
+                )}
+                {provider === "anthropic" && (
+                  <div className="field full">
+                    <label>Anthropic base URL</label>
+                    <input value={cfg.anthropic_base_url || ""} onChange={e => set("anthropic_base_url", e.target.value)} />
+                  </div>
+                )}
+                {provider === "gemini" && (
+                  <div className="field full">
+                    <label>Gemini base URL</label>
+                    <input value={cfg.gemini_base_url || ""} onChange={e => set("gemini_base_url", e.target.value)} />
+                  </div>
+                )}
+
+                {needsKey && (
+                  <>
+                    <div className="field full">
+                      <label>API key {hasKey ? "(saved)" : ""}</label>
+                      <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder={hasKey ? "leave blank to keep saved key" : "paste provider API key"} />
+                    </div>
+                    <label className="field-note full">
+                      <input type="checkbox" checked={clearKey} onChange={e => setClearKey(e.target.checked)} /> clear saved key for this provider
+                    </label>
+                  </>
+                )}
+
+                <div className="field">
+                  <label>Timeout seconds</label>
+                  <input type="number" min="1" max="300" value={cfg.timeout_s ?? 30} onChange={e => set("timeout_s", e.target.value)} />
+                </div>
+                <div className="field">
+                  <label>Max tokens</label>
+                  <input type="number" min="64" max="8192" value={cfg.max_tokens ?? 512} onChange={e => set("max_tokens", e.target.value)} />
+                </div>
+                <div className="field">
+                  <label>Temperature</label>
+                  <input type="number" min="0" max="2" step="0.1" value={cfg.temperature ?? 0.2} onChange={e => set("temperature", e.target.value)} />
+                </div>
+              </div>
+              <div className="field-note">
+                API keys are stored server-side in the app data directory and are not returned to the browser after saving.
+              </div>
+            </div>
+            <div className="settings-actions">
+              <span className="settings-status">{status}</span>
+              <button className="btn secondary" onClick={onClose}>cancel</button>
+              <button className="btn" onClick={save} disabled={saving}>save</button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -1967,54 +2291,94 @@ function App() {
   const [health, setHealth] = useState(null);
   const [tab, setTab] = useState("overview");
   const [chatOpen, setChatOpen] = useState(false);
+  const [llmOpen, setLlmOpen] = useState(false);
+  const [notificationOpen, setNotificationOpen] = useState(false);
+  const [theme, setTheme] = useState(() => localStorage.getItem("systemhealth-theme") || "graphite");
+  const [anomalies] = usePoll("/api/anomalies?history_limit=0", 5000);
+  const [crashes] = usePoll("/api/crashes?window=24h", 15000);
+  const [leaks] = usePoll("/api/leaks", 15000);
+  const [logClusters] = usePoll("/api/logs/cluster?since=15m&limit=20", 10000);
+  const [units] = usePoll("/api/units?window=24h&limit=80", 15000);
 
   useEffect(() => {
     fetch("/api/meta").then(r => r.json()).then(setMeta).catch(() => {});
     fetch("/api/health").then(r => r.json()).then(setHealth).catch(() => {});
   }, []);
 
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("systemhealth-theme", theme);
+  }, [theme]);
+
   const sysStatus = useWS("/ws/system", env => setSys(env.data));
   useWS("/ws/processes", env => setProcs(env.data?.procs));
   useWS("/ws/jetson", env => setJetson(env.data));
   useWS("/ws/health", env => setHealth(env.data));
 
+  const tabs = meta?.host === "jetson"
+    ? ["health", "overview", "jetson", "nmon", "focus", "terminal", "briefing", "hunter", "processes", "services", "leaks", "logs", "crashes", "diagnose"]
+    : ["health", "overview", "nmon", "focus", "terminal", "briefing", "hunter", "processes", "services", "leaks", "logs", "crashes", "diagnose"];
+  const notifications = useMemo(
+    () => buildNotifications({ health, anomalies, crashes, leaks, logClusters, units }),
+    [health, anomalies, crashes, leaks, logClusters, units]
+  );
+  const openNotificationTab = (nextTab) => {
+    if (nextTab) setTab(nextTab);
+    setNotificationOpen(false);
+  };
+
   return (
-    <div className="app" style={{ marginRight: chatOpen ? 340 : 0, transition: "margin-right 0.2s" }}>
-      <TopBar meta={meta} health={health} wsStatus={sysStatus} />
+    <div className={`app ${chatOpen ? "chat-open" : ""}`}>
+      <TopBar meta={meta} health={health} wsStatus={sysStatus} theme={theme} onThemeChange={setTheme} />
       <div className="tabs">
-        {(meta?.host === "jetson"
-          ? ["health", "overview", "jetson", "nmon", "focus", "terminal", "briefing", "hunter", "processes", "services", "leaks", "logs", "crashes", "diagnose"]
-          : ["health", "overview", "nmon", "focus", "terminal", "briefing", "hunter", "processes", "services", "leaks", "logs", "crashes", "diagnose"]
-        ).map(t =>
-          <button key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>{t}</button>
-        )}
-        <div style={{ flex: 1 }} />
-        <button
-          className="btn"
-          onClick={() => setChatOpen(v => !v)}
-          style={{ alignSelf: "center", marginRight: 8, background: chatOpen ? "var(--teal)" : undefined, color: chatOpen ? "#fff" : undefined }}
-        >
-          💬 agent
-        </button>
-        <a href="/SystemHealth%20Wireframes.html" style={{ alignSelf: "center", padding: "0 14px", color: "var(--fg-3)", fontSize: 12 }}>wireframes →</a>
+        <div className="tab-list" role="tablist" aria-label="Dashboard views">
+          {tabs.map(t =>
+            <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>{t}</button>
+          )}
+        </div>
+        <div className="tab-actions">
+          <NotificationCenter
+            items={notifications}
+            open={notificationOpen}
+            onToggle={() => setNotificationOpen(v => !v)}
+            onSelect={openNotificationTab}
+          />
+          <button
+            className={`btn secondary ${llmOpen ? "active" : ""}`}
+            onClick={() => setLlmOpen(v => !v)}
+          >
+            LLM
+          </button>
+          <button
+            className={`btn secondary chat-toggle ${chatOpen ? "active" : ""}`}
+            onClick={() => setChatOpen(v => !v)}
+          >
+            agent
+          </button>
+          <a href="/SystemHealth%20Wireframes.html">wireframes</a>
+        </div>
       </div>
-      <div className="content">
-        {tab === "health" && <HealthView meta={meta} sys={sys} jetson={jetson} procs={procs} health={health} />}
-        {tab === "overview" && <Overview meta={meta} sys={sys} jetson={jetson} />}
-        {tab === "jetson" && <JetsonDetail meta={meta} jetson={jetson} />}
-        {tab === "nmon" && <NmonView meta={meta} />}
-        {tab === "focus" && <AppFocus meta={meta} />}
-        {tab === "terminal" && <TerminalView meta={meta} sys={sys} jetson={jetson} procs={procs} />}
-        {tab === "briefing" && <Briefing />}
-        {tab === "hunter" && <LeakHunter />}
-        {tab === "processes" && <Processes procs={procs} />}
-        {tab === "services" && <Services />}
-        {tab === "leaks" && <Leaks />}
-        {tab === "logs" && <Logs />}
-        {tab === "crashes" && <Crashes />}
-        {tab === "diagnose" && <Diagnose />}
+      <div className="main-shell">
+        <NotificationBanner items={notifications} onSelect={openNotificationTab} />
+        <div className="content">
+          {tab === "health" && <HealthView meta={meta} sys={sys} jetson={jetson} procs={procs} health={health} />}
+          {tab === "overview" && <Overview meta={meta} sys={sys} jetson={jetson} />}
+          {tab === "jetson" && <JetsonDetail meta={meta} jetson={jetson} />}
+          {tab === "nmon" && <NmonView meta={meta} />}
+          {tab === "focus" && <AppFocus meta={meta} />}
+          {tab === "terminal" && <TerminalView meta={meta} sys={sys} jetson={jetson} procs={procs} />}
+          {tab === "briefing" && <Briefing />}
+          {tab === "hunter" && <LeakHunter />}
+          {tab === "processes" && <Processes procs={procs} />}
+          {tab === "services" && <Services />}
+          {tab === "leaks" && <Leaks />}
+          {tab === "logs" && <Logs />}
+          {tab === "crashes" && <Crashes />}
+          {tab === "diagnose" && <Diagnose />}
+        </div>
       </div>
       <AgentChat open={chatOpen} onClose={() => setChatOpen(false)} />
+      <LLMConfigPanel open={llmOpen} onClose={() => setLlmOpen(false)} />
     </div>
   );
 }

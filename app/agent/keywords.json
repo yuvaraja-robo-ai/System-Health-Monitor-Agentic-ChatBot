@@ -1,86 +1,101 @@
 {
   "metrics": {
     "logs": {
-      "keywords": ["log", "logs", "log analysis", "historical results", "live tail"]
+      "keywords": ["log", "logs", "error", "errors", "warning", "warnings", "warn", "fatal", "critical", "exception", "exceptions", "traceback", "stack trace", "journal", "journald", "syslog", "dmesg", "kernel log", "log analysis", "historical results", "live tail", "recent errors", "application errors", "service errors"]
     },
     "log_availability": {
-      "keywords": ["available", "availability", "showing", "present", "ingested", "collected", "empty", "status"]
+      "keywords": ["available", "availability", "showing", "present", "ingested", "ingestion", "collected", "captured", "stored", "empty", "missing", "status"]
     },
     "cpu": {
-      "keywords": ["cpu", "processor", "core", "utilization"],
+      "keywords": ["cpu", "processor", "processors", "core", "cores", "utilization", "utilisation", "load on cpu", "cpu load", "cpu usage", "busy cpu", "per-cpu", "per cpu", "per-core", "per core", "context switch", "context switches", "interrupt", "interrupts", "irq"],
       "exclude": ["gpu"]
     },
     "memory": {
-      "keywords": ["memory", "mem", "ram"],
+      "keywords": ["memory", "mem", "ram", "main memory", "system memory", "available memory", "free memory", "used memory", "memory usage", "ram usage", "cached memory", "buffer memory", "buffers", "cache", "rss", "resident set", "resident memory", "working set"],
       "exclude": ["gpu", "vram"]
     },
     "memory_consumers": {
       "keywords": [
         "application", "applications", "app", "apps",
-        "consuming", "eating", "using up",
+        "consuming", "eating", "using up", "hogging", "hungry", "draining",
         "which process", "what process", "who is using",
         "most memory", "high memory", "top memory", "by memory",
-        "more memory", "biggest", "largest"
+        "more memory", "biggest", "largest", "top ram", "by ram", "rss"
       ]
     },
     "swap": {
-      "keywords": ["swap"]
+      "keywords": ["swap", "swap memory", "swap used", "swap usage", "swap cached", "zram", "paging"]
     },
     "disk": {
-      "keywords": ["disk", "storage", "space", "filesystem", "mount"]
+      "keywords": ["disk", "disks", "storage", "space", "filesystem", "file system", "mount", "mountpoint", "partition", "volume", "drive", "rootfs", "used space", "free space"]
     },
     "temperature": {
-      "keywords": ["temp", "thermal", "hot", "heat", "celsius", "degrees"]
+      "keywords": ["temp", "temperature", "thermal", "thermals", "hot", "heat", "overheat", "overheating", "celsius", "degrees", "soc temp", "cpu temp", "gpu temp", "thermal zone", "tj", "tdiode", "pmic", "tboard"]
     },
     "gpu": {
-      "keywords": ["gpu", "graphics", "cuda", "vram", "gpu ram"]
+      "keywords": ["gpu", "graphics", "cuda", "vram", "gpu ram", "gpu memory", "gpu load", "gr3d", "gr3d_freq", "gr3d_pci", "nvidia gpu", "tegrastats gpu"]
     },
     "power": {
-      "keywords": ["power", "watt", "energy", "consumption"]
+      "keywords": ["power", "watt", "watts", "mw", "milliwatt", "milliwatts", "energy", "consumption", "power rail", "rail", "vdd", "vddrq", "sys5v", "nvpmodel", "nvp model", "power mode"]
     },
     "fan": {
-      "keywords": ["fan", "cooling", "rpm"]
+      "keywords": ["fan", "fans", "cooling", "cooler", "pwm", "rpm", "fan speed"]
     },
     "network": {
-      "keywords": ["network", "net", "bandwidth", "rx", "tx", "throughput"]
+      "keywords": ["network", "net", "nic", "interface", "bandwidth", "network usage", "network traffic", "rx", "tx", "receive", "received", "recv", "send", "sent", "transmit", "throughput", "inbound", "outbound", "ingress", "egress", "traffic", "bytes", "packets"]
     },
     "uptime": {
-      "keywords": ["uptime", "up time", "running for", "how long"]
+      "keywords": ["uptime", "up time", "boot time", "since boot", "running for", "how long", "online for"]
     },
     "health": {
-      "keywords": ["health", "score", "overall status", "system status", "how is the system"]
+      "keywords": ["health", "score", "health score", "overall status", "system status", "host status", "machine status", "node status", "health drivers", "top issues", "why unhealthy", "how is the system", "is system ok", "is the system ok"]
+    },
+    "summary": {
+      "keywords": ["summary", "overview", "snapshot", "briefing", "status report", "system summary", "system overview", "resource usage", "current usage", "overall usage", "what is wrong", "anything wrong", "current state", "current status"]
     },
     "pressure": {
-      "keywords": ["pressure", "psi", "stall"]
+      "keywords": ["pressure", "psi", "stall", "stalled", "stalling", "resource pressure", "cpu pressure", "memory pressure", "io pressure", "i/o pressure"]
+    },
+    "io_wait": {
+      "keywords": ["iowait", "io wait", "i/o wait", "disk wait", "storage wait", "blocked io", "blocked i/o"]
     },
     "anomaly": {
-      "keywords": ["anomaly", "anomalies", "spike", "unusual", "abnormal"]
+      "keywords": ["anomaly", "anomalies", "outlier", "outliers", "spike", "spikes", "unusual", "abnormal", "weird", "unexpected", "deviation"]
     },
     "leak": {
-      "keywords": ["leak", "memory leak", "rss climbing", "rss growing"]
+      "keywords": ["leak", "leaks", "memory leak", "rss climbing", "rss growing", "rss increasing", "memory climbing", "memory growing", "creeping memory", "oom risk"]
     },
     "crash": {
-      "keywords": ["crash", "crashes", "killed", "oom kill", "segfault"]
+      "keywords": ["crash", "crashes", "crashed", "killed", "oom", "oom kill", "oom killed", "out of memory", "segfault", "segmentation fault", "sigsegv", "sigkill", "sigabrt", "core dump", "coredump", "exit code", "exit status", "failed service", "service failed"]
     },
     "process": {
-      "keywords": ["process", "top process", "pid", "what is running", "who is using"]
+      "keywords": ["process", "processes", "top process", "top processes", "pid", "pids", "task", "tasks", "thread", "threads", "service", "services", "daemon", "daemons", "what is running", "who is using"]
     },
     "load_average": {
-      "keywords": ["load average", "load avg", "load 1", "load 5", "load 15"]
+      "keywords": ["load average", "load avg", "system load", "load1", "load5", "load15", "load 1", "load 5", "load 15", "1 minute load", "5 minute load", "15 minute load"]
     },
     "emc": {
-      "keywords": ["emc", "memory controller", "dla", "nvenc", "nvdec", "vic"]
+      "keywords": ["emc", "emc_freq", "memory controller", "external memory controller", "dla", "nvdla", "nvdla0", "nvdla1", "nvenc", "nvenc1", "nvdec", "nvdec1", "vic", "ape", "pva", "engine", "engines", "hardware engine", "video encoder", "video decoder"]
+    },
+    "timeline": {
+      "keywords": ["incident", "incidents", "event", "events", "timeline", "recent incidents", "recent events", "what happened", "latest events", "latest incidents"]
+    },
+    "sla": {
+      "keywords": ["sla", "slo", "uptime percent", "uptime percentage", "availability", "downtime", "mttr", "incident count", "reliability"]
+    },
+    "services": {
+      "keywords": ["unit", "units", "systemd unit", "systemd units", "service status", "services status", "failed unit", "failed units", "restarting service", "restarts"]
     }
   },
   "process_query": {
-    "metric_keywords": ["cpu", "memory", "mem", "ram", "usage", "process", "pid", "utilization"],
-    "system_scope": ["overall", "total system", "all processes", "top process"]
+    "metric_keywords": ["cpu", "memory", "mem", "ram", "rss", "usage", "process", "pid", "utilization", "utilisation", "thread", "threads", "service", "fd", "file descriptor", "open files"],
+    "system_scope": ["overall", "total system", "system-wide", "system wide", "all processes", "top process"]
   },
   "reasoning": [
     "why", "what should", "how to", "how can", "how do", "how would",
-    "fix", "diagnose", "cause", "reason", "recommend", "help",
+    "fix", "diagnose", "troubleshoot", "debug", "root cause", "cause", "reason", "recommend", "help",
     "optimize", "optimise", "improve", "reduce", "lower", "decrease",
-    "tune", "configure", "should i", "best way", "best practice",
+    "tune", "configure", "mitigate", "remediate", "resolve", "should i", "best way", "best practice",
     "what can i", "what could", "is it safe", "explain", "analyze", "analyse"
   ]
 }

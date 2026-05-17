@@ -30,13 +30,36 @@ data/kb/auto_*.md
 # Keep KB runbooks but not generated indexes
 # (add your own .md files to data/kb/ and commit them)
 
-# Secrets / config
+# ── Secrets / config — NEVER COMMIT ───────────────────────────
 .env
 .env.*
 !.env.example
 *.pem
 *.key
 *.crt
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+*.kdbx
+secrets.json
+credentials.json
+.netrc
+.npmrc
+.pypirc
+*_token*
+*_secret*
+*_credentials*
+*api_key*
+*apikey*
+
+# Cloud provider creds
+.aws/
+.azure/
+.gcloud/
+gcp-key*.json
+service-account*.json
+firebase-adminsdk*.json
 
 # IDE
 .idea/
